@@ -123,7 +123,7 @@ async def process_batch(page, tickets: list, done: dict) -> int:
     """Process one batch of new/updated tickets through the brain."""
     from src.llm.agent_brain import get_agent_brain
     from src.query_engine.metabase_engine import MetabaseQueryEngine
-    from src.api.decision_store import save_decision, save_understanding
+    from src.api.decision_store import save_decision
 
     brain  = get_agent_brain()
     engine = MetabaseQueryEngine()
@@ -180,14 +180,14 @@ async def process_batch(page, tickets: list, done: dict) -> int:
                             "data": {"rows": []}, "error": str(e)
                         })
 
-            # Stage 1+2: Understand ticket + match scenario → save for approval
-            understanding = brain.understand(full_ticket)
-            row_id = save_understanding(full_ticket, understanding)
-            top = understanding.scenario_matches[0] if understanding.scenario_matches else {}
-            log.info(f"    [UNDERSTAND] clean='{understanding.clean_problem[:80]}'")
-
-            top_match = understanding.scenario_matches[0] if understanding.scenario_matches else {}
-            log.info(f"    [PENDING APPROVAL] top_match={top_match.get('id')} ({top_match.get('score')}%) | saved id={row_id}")
+            # Single-call: Stage 0 + SOP + Gemini decision in brain.process()
+            decision = brain.process(full_ticket, query_results)
+            usage = getattr(decision, "usage", {}) or {}
+            row_id = save_decision(full_ticket, decision, usage)
+            log.info(
+                f"    [{decision.action.upper()}] scenario={decision.scenario_identified} "
+                f"conf={decision.confidence}/10 | saved id={row_id}"
+            )
 
             done[tid] = t.get("last_conversation_time", "")
             new_count += 1
