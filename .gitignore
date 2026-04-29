@@ -41,7 +41,8 @@ data/*.png
 .DS_Store
 Thumbs.db
 
-# Generated KT markdown (regenerated from stage0_domain.json + kt_log)
-data/sop_knowledge/kt_*.md
+# KT additions captured via the KT engine — these ARE knowledge,
+# track them so the repo carries the agent's full context.
+# Only exclude the per-ticket noise:
 data/sop_knowledge/trainer_qa_*.md
 data/sop_knowledge/resolved_*.md
