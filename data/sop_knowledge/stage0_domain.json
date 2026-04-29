@@ -1,0 +1,263 @@
+{
+  "_meta": {
+    "purpose": "Per-queue domain knowledge for Stage 0 (situational reasoning). Read by agent_brain._stage0_assess() before SOP matching.",
+    "fill_via": "POST /api/kt/structured  →  updates a queue's section without restart.",
+    "scan_taxonomy": {
+      "PICKUP_CREATED": "Order created, ready for pickup from seller/origin",
+      "OUT_FOR_PICKUP": "Pickup rider out to collect from seller",
+      "PICKED_UP": "Collected from seller/origin",
+      "INSCAN": "Scanned IN at a hub on arrival (most common arrival event)",
+      "MANIFEST_SCAN": "Added to outward manifest/bag — committed to forward movement",
+      "BOOKING": "Shipment booking confirmed in system",
+      "THC_SCAN": "Truck handover/consolidation scan at hub",
+      "VEHICLE_ARRIVED": "Inbound vehicle reached destination hub",
+      "MANIFEST_RECEIVED": "Inbound manifest received at destination hub",
+      "INWARD_SCAN": "Scanned inward at destination hub",
+      "DRS_SCAN": "Delivery Run Sheet — assigned to FE for delivery",
+      "OFD_SCAN": "Out For Delivery — FE left hub with shipment",
+      "UNDELIVERED": "Delivery attempt failed (customer issue)",
+      "DELIVERED": "Successfully delivered to customer (last-mile completion)",
+      "SEC_QC_PASS": "Secondary QC at hub passed",
+      "SEC_QC_FAIL": "Secondary QC at hub failed (count or condition mismatch)",
+      "UPDATED_STATUS": "Manual status update by ops",
+      "RTO_IN": "Return to origin — scanned inward back at origin",
+      "TAMPERED": "Package found tampered",
+      "CONSIGNMENT_MARKED_LOST": "System-marked as lost",
+      "RTO_*": "Any scan with RTO_ prefix = same event but on the return-to-origin leg",
+      "RVP_*": "Reverse Pickup leg (customer returning a delivered shipment)"
+    }
+  },
+  "queues": {
+    "losses_and_debits": {
+      "status": "complete",
+      "queue_aliases": [
+        "W- LD",
+        "Losses & Debits",
+        "losses_and_debits",
+        "LD",
+        "hardstop",
+        "shipment_shortage",
+        "shortage"
+      ],
+      "loss_type_taxonomy": {
+        "hardstop": {
+          "physical_event": "Shipment arrived at a hub but was not connected forward within SLA (7 days forward / 5 days reverse). System auto-marks loss against the holding hub.",
+          "trigger_scans": "INWARD_SCAN (or VEHICLE_ARRIVED + MANIFEST_RECEIVED) but no subsequent MANIFEST_SCAN within 7 days (5 for reverse leg). Look for gap between arrival and outward MANIFEST_SCAN.",
+          "captain_signals": [
+            "loss marked",
+            "hardstop",
+            "wrong loss",
+            "5 day",
+            "7 day",
+            "not connected",
+            "stuck at hub"
+          ],
+          "scenario_family": "hardstop_loss",
+          "common_sub_scenarios": [
+            "HS_1_1 valid scans + SOP followed",
+            "HS_1_2 valid scans + SOP not followed",
+            "HS_2 wrong destination",
+            "HS_8_1/8_2 not inscanned",
+            "HS_10/11 misroute"
+          ]
+        },
+        "shortage": {
+          "physical_event": "Item count or condition mismatch at a node — fewer items received than the manifest claimed. SEC_QC_FAIL is the canonical scan trigger.",
+          "trigger_scans": "SEC_QC_FAIL at a node, or discrepancy between MANIFEST_RECEIVED count vs INWARD_SCAN count",
+          "captain_signals": [
+            "shortage",
+            "missing item",
+            "short delivery",
+            "count mismatch",
+            "items missing",
+            "received less"
+          ],
+          "scenario_family": "shortage_loss",
+          "common_sub_scenarios": [
+            "SS_1 missing evidence mails (L3)",
+            "SS_3 one-party evidence (SLA breach)",
+            "SS_4 both-party evidence contested"
+          ]
+        },
+        "misroute": {
+          "physical_event": "Shipment dispatched to wrong destination hub (sc_migration_issue). Captain has 2 days from VEHICLE_ARRIVED at wrong hub to re-MANIFEST_SCAN. Beyond 2 days = hardstop on original hub.",
+          "trigger_scans": "VEHICLE_ARRIVED at hub != intended destination, then MISROUTE-tagged scan or no re-routing within 2 days",
+          "captain_signals": [
+            "wrong hub",
+            "wrong shipment",
+            "misrouted",
+            "sent to wrong DC",
+            "post manifest"
+          ],
+          "scenario_family": "hardstop_loss",
+          "common_sub_scenarios": [
+            "HS_10 misroute beyond 2d",
+            "HS_11_1 correctly misrouted within 2d",
+            "HS_11_2 incorrectly misrouted"
+          ]
+        },
+        "pilot_lost_on_field": {
+          "physical_event": "FE left hub with shipment but neither delivered nor returned. CONSIGNMENT_MARKED_LOST follows OFD_SCAN with no DELIVERED/UNDELIVERED.",
+          "trigger_scans": "OFD_SCAN  →  CONSIGNMENT_MARKED_LOST (with no DELIVERED or UNDELIVERED in between)",
+          "captain_signals": [
+            "pilot lost",
+            "fe lost",
+            "lost on field",
+            "rider lost"
+          ],
+          "scenario_family": "hardstop_loss",
+          "common_sub_scenarios": [
+            "HS_8_1 amount recovered → reverse",
+            "HS_8_2 not recovered + Consignment_Lost → reverse"
+          ]
+        },
+        "not_inscanned": {
+          "physical_event": "No INWARD_SCAN at captain's hub — captain claims shipment never reached them.",
+          "trigger_scans": "Absence of INWARD_SCAN at the disputed hub. Check LM FE Loss Marked for amount-recovered status.",
+          "captain_signals": [
+            "not inscanned",
+            "never received",
+            "didn't reach hub",
+            "shipment not received"
+          ],
+          "scenario_family": "hardstop_loss",
+          "common_sub_scenarios": [
+            "HS_8_1",
+            "HS_8_2"
+          ]
+        },
+        "delivered_unrecorded": {
+          "physical_event": "FE physically handed parcel to customer but didn't mark DELIVERED in app — system marks loss because no DELIVERED scan exists.",
+          "trigger_scans": "OFD_SCAN exists, no DELIVERED, no UNDELIVERED, no CONSIGNMENT_MARKED_LOST. Captain provides POD/photo proof.",
+          "captain_signals": [
+            "delivered but not marked",
+            "couldn't mark",
+            "app crashed",
+            "scan not working but delivered"
+          ],
+          "scenario_family": "hardstop_loss",
+          "common_sub_scenarios": [
+            "HS_7"
+          ]
+        },
+        "tech_no_loss": {
+          "physical_event": "Pure tech/scan failure without loss — captain reports something not working but no loss marked yet.",
+          "trigger_scans": "N/A — no scan check needed. Redirect to Log10 team.",
+          "captain_signals": [
+            "scan not working",
+            "app issue",
+            "can't login",
+            "page not loading"
+          ],
+          "scenario_family": "tech_issue",
+          "common_sub_scenarios": [
+            "TECH_1"
+          ]
+        },
+        "tech_with_loss": {
+          "physical_event": "Tech failure that caused or compounded a loss event (e.g. couldn't initiate RTO scan due to app crash, loss got marked).",
+          "trigger_scans": "Mixed signal: tech-failure language + actual loss marking. Captain has proof (screenshot/error).",
+          "captain_signals": [
+            "scan not working AND loss marked",
+            "couldn't initiate AND debit",
+            "app issue AND wrong loss"
+          ],
+          "scenario_family": "tech_issue",
+          "common_sub_scenarios": [
+            "TECH_2"
+          ]
+        }
+      },
+      "reason_l1_taxonomy": {
+        "hardstop": "Forward-connection breach (5/7 day rule)",
+        "shipment_shortage": "Count/condition mismatch at hub",
+        "bag_shortage": "Bag-level shortage (sub-class of shortage)",
+        "sc_migration_issue": "Post-manifest misroute (covers post_manif_misroute, post_manif_consolidated, etc.)",
+        "dual_scan_mismatch": "Same shipment scanned at two nodes — data conflict, not physical loss",
+        "intransit": "Shipment stuck in network 30+ days",
+        "seller_dependency_sop_breached": "Captain waited for seller, breached timeline (HS_9 family)",
+        "pilot_shipment_lost_on_field": "FE physically lost on field",
+        "secondary_qc_fail": "Failed at SEC_QC scan — usually shortage/damage triggered",
+        "rto_vehicle_placement_issue": "RTO vehicle didn't show up — placement failure",
+        "fareye_migration": "Migration-related loss (legacy)",
+        "data_platform_issue": "Data platform error — eligible for reversal",
+        "debit_revoked": "Already reversed (many sub-types)"
+      },
+      "metabase_columns": {
+        "loss_attribution_check": "TODO — paste actual columns. Expected: awb, loss_type, attributed_node, loss_date, reason_l1",
+        "lm_fe_loss_marked": "TODO — paste actual columns. Expected: awb, amount_recovered, last_status, fe_id",
+        "seller_dependency_attempts": "TODO — paste actual columns. Expected: awb, instruction_date, attempt_count, sop_followed_flag"
+      },
+      "preprocessing_rules": [
+        "If scan node name has 'PCXX' = Packaging Center → AWB is consolidated. Find parent AWB via Single AWB Tracking, process parent.",
+        "If ticket has Bag IDs (UN + digits) but no AWB → enter Bag ID in Valmo 2k24 Lost query to extract AWBs. Do NOT ask captain.",
+        "'Delivered' in all loss scenarios = delivered to END CUSTOMER (DELIVERED scan with FE marking), NOT delivered to hub.",
+        "Hardstop SLA: 7 days forward leg, 5 days reverse leg, gap measured INWARD_SCAN → MANIFEST_SCAN."
+      ]
+    },
+    "payments": {
+      "status": "placeholder",
+      "queue_aliases": [
+        "M_V",
+        "Payments",
+        "payments"
+      ],
+      "loss_type_taxonomy": {},
+      "metabase_columns": {
+        "captain_payment_status_and_amount": "TODO — add via KT engine. Expected: hub_code, enbolt_id, invoice_no, payment_status, remarks",
+        "fnf_dashboard": "TODO — add via KT engine. Expected: hub_code, ap_remarks, cost_ops_sub_header, payment_process_date",
+        "lm_pilot_payout_raw": "TODO — add via KT engine"
+      },
+      "preprocessing_rules": [
+        "Scans are NOT typically used for payment tickets — main verification is via Metabase remarks columns."
+      ],
+      "_kt_hint": "To activate: provide column meanings for the 3 payment queries + the templates triggered by each remark value."
+    },
+    "consumables": {
+      "status": "placeholder",
+      "queue_aliases": [
+        "C_V",
+        "Consumables",
+        "consumable",
+        "consumables"
+      ],
+      "loss_type_taxonomy": {},
+      "metabase_columns": {
+        "rvp_consumables_partner_details": "TODO — add via KT engine. Expected: order_id, supplier_code, dispatch_date, delivery_date, order_status, docket_no, courier_name",
+        "captain_payout_consumables": "TODO — add via KT engine. Expected: hub_id, billing_cycle, rvp_consumable_amount, rvp_consumable_packet_count, rvp_consumable_rate"
+      },
+      "preprocessing_rules": [],
+      "_kt_hint": "To activate: provide column meanings for RVP Consumables Partner Details + Captain Payout queries."
+    },
+    "orders_and_planning": {
+      "status": "placeholder",
+      "queue_aliases": [
+        "orders",
+        "orders_and_planning",
+        "Orders & Planning"
+      ],
+      "loss_type_taxonomy": {},
+      "metabase_columns": {
+        "orders_and_planning_view": "TODO — add via KT engine. Expected: hub_code, user_pin, L1_remarks, current_volume, target_volume",
+        "signal_superset": "TODO — add via KT engine"
+      },
+      "preprocessing_rules": [],
+      "_kt_hint": "To activate: provide L1_remarks values + their corresponding template responses."
+    },
+    "cash_handover": {
+      "status": "placeholder",
+      "queue_aliases": [
+        "cod",
+        "cash_handover",
+        "Cash Handover"
+      ],
+      "loss_type_taxonomy": {},
+      "metabase_columns": {
+        "valmo_lmdc_cod_pendency": "TODO — add via KT engine. Expected: hub_code, current_pendency, last_deposit_date, last_deposit_amount",
+        "cash_handover_query": "TODO — add via KT engine"
+      },
+      "preprocessing_rules": [],
+      "_kt_hint": "To activate: provide column meanings for COD Pendency + Cash Handover queries."
+    }
+  }
+}

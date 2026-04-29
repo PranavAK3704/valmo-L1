@@ -1,0 +1,47 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Runtime data — regeneratable, may contain PII / live tickets / API keys
+data/decisions.db
+data/tickets.db
+data/chroma_db/
+data/.mode
+data/.log10_session.json
+data/scraped_tickets.jsonl
+data/scraped_tickets_v2.jsonl
+data/ground_truth.jsonl
+data/stuck_queue.jsonl
+data/trainer_qa.jsonl
+data/kt_log.jsonl
+data/live_processed.json
+data/dry_run_*.json
+data/diverse_sample.json
+
+# Logs / screenshots
+*.log
+data/*.log
+data/*.txt
+data/*.png
+
+# Editor / OS / Claude Code agent
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db
+
+# Generated KT markdown (regenerated from stage0_domain.json + kt_log)
+data/sop_knowledge/kt_*.md
+data/sop_knowledge/trainer_qa_*.md
+data/sop_knowledge/resolved_*.md

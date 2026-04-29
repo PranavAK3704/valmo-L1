@@ -1,0 +1,2506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Valmo L1 Agent — Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --surface2: #22263a;
+    --accent: #6c63ff; --accent2: #00d4aa;
+    --green: #22c55e; --yellow: #f59e0b; --red: #ef4444; --blue: #3b82f6;
+    --text: #e2e8f0; --muted: #64748b; --border: #2d3148;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+
+  /* NAV */
+  nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 14px 28px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+  .nav-brand { font-size: 18px; font-weight: 700; color: var(--accent); letter-spacing: .5px; }
+  .nav-brand span { color: var(--text); font-weight: 400; }
+  .mode-wrap { display: flex; align-items: center; gap: 12px; }
+  .mode-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .toggle { position: relative; width: 52px; height: 26px; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; inset: 0; background: var(--surface2); border-radius: 26px; cursor: pointer; transition: .3s; border: 1px solid var(--border); }
+  .slider:before { content: ''; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background: var(--muted); border-radius: 50%; transition: .3s; }
+  input:checked + .slider { background: var(--accent); border-color: var(--accent); }
+  input:checked + .slider:before { transform: translateX(26px); background: #fff; }
+  .mode-status { font-size: 13px; font-weight: 600; color: var(--muted); min-width: 80px; }
+  .mode-status.autonomous { color: var(--green); }
+  .refresh-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background .2s; }
+  .refresh-btn:hover { background: var(--border); }
+
+  /* LAYOUT */
+  main { padding: 24px 28px; max-width: 1400px; margin: 0 auto; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 16px; }
+
+  /* METRIC CARDS */
+  .metrics-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; transition: border-color .2s; }
+  .card:hover { border-color: var(--accent); }
+  .card-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 8px; }
+  .card-value { font-size: 28px; font-weight: 700; line-height: 1; }
+  .card-sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .c-green { color: var(--green); }
+  .c-yellow { color: var(--yellow); }
+  .c-red { color: var(--red); }
+  .c-blue { color: var(--blue); }
+  .c-accent { color: var(--accent); }
+  .c-accent2 { color: var(--accent2); }
+
+  /* CHARTS ROW */
+  .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 28px; }
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .chart-card h3 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; }
+  canvas { max-height: 220px; }
+
+  /* DECISIONS TABLE */
+  .table-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .table-header { padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
+  .table-header h3 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .filter-tabs { display: flex; gap: 8px; }
+  .tab { background: none; border: 1px solid var(--border); color: var(--muted); padding: 5px 12px; border-radius: 20px; cursor: pointer; font-size: 12px; transition: all .2s; }
+  .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { background: var(--surface2); padding: 10px 16px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); font-weight: 600; }
+  td { padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: top; font-size: 13px; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(108, 99, 255, 0.04); }
+
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+  .badge-respond   { background: rgba(34,197,94,.15); color: var(--green); }
+  .badge-escalate  { background: rgba(239,68,68,.15); color: var(--red); }
+  .badge-stuck     { background: rgba(245,158,11,.15); color: var(--yellow); }
+  .badge-needs_info{ background: rgba(59,130,246,.15); color: var(--blue); }
+  .badge-pending   { background: rgba(100,116,139,.15); color: var(--muted); }
+  .badge-approved  { background: rgba(34,197,94,.15); color: var(--green); }
+  .badge-rejected  { background: rgba(239,68,68,.15); color: var(--red); }
+  .badge-sent      { background: rgba(0,212,170,.15); color: var(--accent2); }
+
+  .conf-bar { display: inline-block; width: 60px; height: 6px; background: var(--surface2); border-radius: 3px; vertical-align: middle; margin-left: 6px; }
+  .conf-fill { height: 100%; border-radius: 3px; background: var(--accent); }
+
+  .ticket-id { font-family: monospace; font-size: 12px; font-weight: 600; color: var(--text); background: var(--surface2); padding: 2px 6px; border-radius: 4px; }
+  .subject-text { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .action-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn-approve { background: rgba(34,197,94,.15); border: 1px solid var(--green); color: var(--green); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: all .2s; }
+  .btn-approve:hover { background: var(--green); color: #000; }
+  .btn-reject  { background: rgba(239,68,68,.12); border: 1px solid var(--red); color: var(--red); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: all .2s; }
+  .btn-reject:hover { background: var(--red); color: #fff; }
+  .btn-view { background: rgba(108,99,255,.12); border: 1px solid var(--accent); color: var(--accent); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: all .2s; }
+  .btn-view:hover { background: var(--accent); color: #fff; }
+
+  /* MODAL */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 200; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 28px; max-width: 680px; width: 90%; max-height: 85vh; overflow-y: auto; }
+  .modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+  .modal-section { margin-bottom: 16px; }
+  .modal-section label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); display: block; margin-bottom: 6px; }
+  .modal-section p { background: var(--surface2); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+  .modal textarea { width: 100%; background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px; font-size: 13px; resize: vertical; min-height: 80px; margin-top: 8px; }
+  .modal-close { position: absolute; top: 16px; right: 16px; background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; }
+  .modal { position: relative; }
+
+  .empty { text-align: center; padding: 48px; color: var(--muted); }
+  .loading { text-align: center; padding: 48px; color: var(--muted); }
+
+  /* THINKER MODAL */
+  .think-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 300; align-items: center; justify-content: center; }
+  .think-overlay.open { display: flex; }
+  .think-modal { background: var(--surface); border: 1px solid var(--accent); border-radius: 20px; padding: 32px; max-width: 580px; width: 92%; max-height: 82vh; overflow-y: auto; position: relative; box-shadow: 0 0 40px rgba(108,99,255,0.25); }
+  .think-modal-close { position: absolute; top: 14px; right: 16px; background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; }
+  .think-tab { background:none; border:none; color:var(--muted); font-size:12px; font-weight:600; padding:6px 14px; border-radius:8px; cursor:pointer; transition:all .2s; }
+  .think-tab.active { background:rgba(108,99,255,.15); color:var(--accent); }
+  .think-tab:hover { color:var(--text); }
+  .step-body { cursor:pointer; }
+  .step-expand-btn { font-size:10px; color:var(--muted); margin-left:6px; transition:transform .2s; display:inline-block; }
+  .step-expanded .step-expand-btn { transform:rotate(180deg); }
+  .step-full-detail { display:none; margin-top:8px; font-size:11px; color:var(--muted); background:var(--surface2); border-radius:8px; padding:10px 12px; line-height:1.6; white-space:pre-wrap; word-break:break-word; border-left:3px solid var(--accent); }
+  .step-expanded .step-full-detail { display:block; }
+  .learned-entry { border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:10px; transition:border-color .2s; }
+  .learned-entry:hover { border-color:var(--accent); }
+  .learned-entry.type-ticket { border-left:3px solid var(--accent2); }
+  .learned-entry.type-trainer { border-left:3px solid var(--accent); }
+  .learned-entry.type-sop { border-left:3px solid var(--border); }
+  .learned-header { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .learned-source { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; }
+  .learned-source.ticket { color:var(--accent2); }
+  .learned-source.trainer { color:var(--accent); }
+  .learned-tags { display:flex; flex-wrap:wrap; gap:4px; }
+  .learned-tag { font-size:10px; background:rgba(108,99,255,.12); color:var(--accent); padding:2px 7px; border-radius:8px; }
+  .learned-summary { font-size:12px; color:var(--muted); line-height:1.55; }
+  .learned-full { display:none; margin-top:8px; font-size:11px; color:var(--muted); background:var(--surface2); border-radius:8px; padding:10px 12px; white-space:pre-wrap; word-break:break-word; }
+  .learned-expanded .learned-full { display:block; }
+  .learned-toggle { font-size:11px; color:var(--accent); cursor:pointer; margin-top:6px; display:inline-block; }
+  .think-header { text-align: center; margin-bottom: 28px; }
+  .brain-icon { font-size: 52px; display: inline-block; animation: brain-pulse 1.8s ease-in-out infinite; }
+  .brain-icon.done { animation: brain-bounce 0.4s ease; }
+  @keyframes brain-pulse {
+    0%,100% { transform: scale(1); filter: drop-shadow(0 0 8px rgba(108,99,255,.5)); }
+    50%      { transform: scale(1.12); filter: drop-shadow(0 0 22px rgba(108,99,255,.9)); }
+  }
+  @keyframes brain-bounce {
+    0%   { transform: scale(1); }
+    40%  { transform: scale(1.2); }
+    70%  { transform: scale(0.95); }
+    100% { transform: scale(1); }
+  }
+  .think-title { font-size: 15px; font-weight: 700; margin-top: 10px; color: var(--accent); letter-spacing: .5px; }
+  .think-subtitle { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .think-steps { margin-top: 8px; }
+  .think-step { display: flex; gap: 14px; margin-bottom: 6px; opacity: 0; transform: translateY(12px); transition: opacity .35s ease, transform .35s ease; }
+  .think-step.visible { opacity: 1; transform: translateY(0); }
+  .step-left { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 30px; }
+  .step-icon { font-size: 20px; line-height: 1; }
+  .step-connector { width: 2px; flex: 1; min-height: 16px; background: var(--border); margin: 4px 0; border-radius: 1px; }
+  .step-body { flex: 1; padding-bottom: 14px; }
+  .step-label { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+  .step-detail { font-size: 12px; color: var(--muted); line-height: 1.55; }
+  .status-done     .step-label { color: var(--text); }
+  .status-thinking .step-label { color: var(--accent); }
+  .status-warning  .step-label { color: var(--yellow); }
+  .status-blocked  .step-label { color: var(--red); }
+  .upgrade-card { background: linear-gradient(135deg, rgba(108,99,255,.18), rgba(0,212,170,.10)); border: 1px solid rgba(108,99,255,.4); border-radius: 10px; padding: 14px 16px; margin-top: 10px; }
+  .upgrade-card p { font-size: 13px; line-height: 1.6; color: var(--text); }
+  /* brain button in table */
+  .btn-brain { background: rgba(108,99,255,.12); border: 1px solid rgba(108,99,255,.3); color: var(--accent); padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: all .2s; }
+  .btn-brain:hover { background: var(--accent); color: #fff; }
+
+  .btn-approve { background:var(--green); color:#000; border:none; padding:8px 20px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:600; transition:opacity .2s; }
+  .btn-approve:hover { opacity:.85; }
+  .btn-approve:disabled { opacity:.4; cursor:not-allowed; }
+
+  /* PAGE TABS */
+  .page-tabs { display: flex; gap: 4px; margin-bottom: 28px; border-bottom: 1px solid var(--border); }
+  .page-tab { background: none; border: none; color: var(--muted); padding: 10px 20px; cursor: pointer; font-size: 13px; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .2s; }
+  .page-tab:hover { color: var(--text); }
+  .page-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .page-panel { display: none; }
+  .page-panel.active { display: block; }
+
+  /* KT ENGINE */
+  .kt-form { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px; }
+  .kt-form h3 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 18px; }
+  .kt-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .kt-input, .kt-select { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px 14px; font-size: 13px; width: 100%; }
+  .kt-textarea { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 12px 14px; font-size: 13px; width: 100%; resize: vertical; min-height: 140px; margin-bottom: 12px; font-family: inherit; }
+  .kt-submit { background: var(--accent); border: none; color: #fff; padding: 10px 24px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; transition: opacity .2s; }
+  .kt-mic-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); padding: 10px 16px; border-radius: 8px; cursor: pointer; font-size: 15px; transition: all .2s; margin-right: 10px; display: inline-flex; align-items: center; gap: 6px; }
+  .kt-mic-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .kt-mic-btn.recording { background: rgba(239,68,68,.15); border-color: var(--red); color: var(--red); animation: pulse-rec 1s ease-in-out infinite; }
+  @keyframes pulse-rec { 0%,100% { opacity:1; } 50% { opacity:.5; } }
+  .kt-stt-status { font-size: 11px; color: var(--muted); margin-left: 10px; }
+  .kt-submit:hover { opacity: .85; }
+  .kt-success { color: var(--green); font-size: 13px; margin-left: 12px; }
+  .kt-log-entry { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; margin-bottom: 10px; }
+  .kt-log-entry .kt-tag { display: inline-block; background: rgba(108,99,255,.15); color: var(--accent); font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-right: 8px; }
+  .kt-log-entry .kt-time { font-size: 11px; color: var(--muted); }
+  .kt-log-entry .kt-preview { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  /* STUCK QUEUE */
+  .stuck-item { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 14px; }
+  .stuck-item .stuck-ticket { font-family: monospace; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .stuck-item .stuck-question { font-size: 13px; background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.2); border-radius: 8px; padding: 12px; color: var(--yellow); margin-bottom: 12px; white-space: pre-wrap; }
+  .stuck-item textarea { width: 100%; background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px; font-size: 13px; resize: vertical; min-height: 80px; }
+  .stuck-item .btn-answer { background: var(--accent); border: none; color: #fff; padding: 8px 18px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; margin-top: 10px; }
+
+  /* CXO VIEW */
+  .cxo-section { margin-bottom: 32px; }
+  .cxo-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .cxo-grades { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .grade-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center; position: relative; overflow: hidden; }
+  .grade-card.primary { border-color: var(--accent); background: linear-gradient(135deg, rgba(108,99,255,.1), var(--surface)); }
+  .grade-card .grade-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 10px; }
+  .grade-card .grade-value { font-size: 52px; font-weight: 800; line-height: 1; }
+  .grade-card .grade-denom { font-size: 20px; color: var(--muted); font-weight: 400; }
+  .grade-card .grade-target { font-size: 11px; margin-top: 10px; }
+  .grade-card .grade-bench { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .kr-pass { color: var(--green); }
+  .kr-fail { color: var(--red); }
+  .kr-warn { color: var(--yellow); }
+  .kr-pill { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; }
+  .kr-pill-pass { background: rgba(34,197,94,.15); color: var(--green); }
+  .kr-pill-fail { background: rgba(239,68,68,.15); color: var(--red); }
+  .kr-pill-warn { background: rgba(245,158,11,.15); color: var(--yellow); }
+
+  .kr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+  .kr-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+  .kr-card .kr-name { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 8px; }
+  .kr-card .kr-val { font-size: 26px; font-weight: 700; line-height: 1; }
+  .kr-card .kr-tgt { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+  .pl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+  .pl-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .pl-card .pl-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 8px; }
+  .pl-card .pl-value { font-size: 30px; font-weight: 700; line-height: 1; }
+  .pl-card .pl-sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .pl-card.highlight { border-color: var(--accent2); background: linear-gradient(135deg, rgba(0,212,170,.07), var(--surface)); }
+
+  .cxo-csat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .cxo-csat table { width: 100%; font-size: 12px; }
+  .cxo-csat th { padding: 6px 10px; text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+  .cxo-csat td { padding: 6px 10px; border-bottom: 1px solid rgba(45,49,72,.5); }
+  .cxo-csat tr:last-child td { border-bottom: none; }
+  .cxo-csat-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+  .cxo-csat-link:hover { text-decoration: underline; }
+
+  .grade-bar-wrap { margin-top: 10px; }
+  .grade-bar { height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+  .grade-bar-fill { height: 100%; border-radius: 4px; transition: width .6s ease; }
+
+  @media (max-width: 900px) {
+    .charts-row { grid-template-columns: 1fr; }
+    .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+    .kt-row { grid-template-columns: 1fr; }
+    .gt-cols { grid-template-columns: 1fr; }
+    .cxo-grades { grid-template-columns: 1fr; }
+    .kr-grid { grid-template-columns: repeat(2, 1fr); }
+    .thinker-layout { flex-direction: column; }
+    .thinker-left { width: 100%; max-height: 240px; }
+  }
+
+  /* ── THINKER TAB ──────────────────────────────────────────────── */
+  .thinker-tab-btn { background: linear-gradient(135deg,rgba(108,99,255,.25),rgba(0,212,170,.15)) !important; border-color: var(--accent) !important; font-weight:700 !important; }
+  .thinker-tab-btn.active { background: linear-gradient(135deg,var(--accent),#a855f7) !important; color:#fff !important; box-shadow: 0 0 16px rgba(108,99,255,.5); }
+
+  .thinker-layout { display:flex; gap:20px; height: calc(100vh - 180px); min-height: 500px; }
+
+  /* LEFT PANEL */
+  .thinker-left { width:290px; flex-shrink:0; background:var(--surface); border:1px solid var(--border); border-radius:16px; overflow:hidden; display:flex; flex-direction:column; }
+  .thinker-left-header { padding:12px 16px; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; background:rgba(108,99,255,.04); }
+  .live-dot { width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:livepulse 1.2s ease-in-out infinite; flex-shrink:0; }
+  @keyframes livepulse { 0%,100%{opacity:1;transform:scale(1);box-shadow:0 0 6px var(--green)} 50%{opacity:.6;transform:scale(1.5);box-shadow:0 0 12px var(--green)} }
+
+  .thinker-ticket-list { flex:1; overflow-y:auto; padding:8px; }
+  .thinker-ticket-item { padding:10px 12px; border-radius:10px; cursor:pointer; border:1px solid transparent; margin-bottom:5px; transition:all .18s; position:relative; overflow:hidden; }
+  .thinker-ticket-item::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--accent); transform:scaleY(0); transition:transform .2s; border-radius:0 2px 2px 0; }
+  .thinker-ticket-item:hover { border-color:rgba(108,99,255,.3); background:rgba(108,99,255,.06); }
+  .thinker-ticket-item:hover::before { transform:scaleY(1); }
+  .thinker-ticket-item.active { border-color:var(--accent); background:rgba(108,99,255,.14); box-shadow:0 2px 12px rgba(108,99,255,.15); }
+  .thinker-ticket-item.active::before { transform:scaleY(1); }
+  .tti-id { font-size:10px; color:var(--muted); font-family:monospace; margin-bottom:3px; }
+  .tti-subject { font-size:12px; color:var(--text); margin:2px 0 5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:500; }
+  .tti-meta { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .tti-queue { font-size:10px; color:var(--muted); background:var(--surface2); padding:2px 6px; border-radius:4px; font-family:monospace; }
+  .tti-action { font-size:10px; font-weight:700; padding:2px 7px; border-radius:20px; letter-spacing:.3px; }
+  .tti-action.respond { background:rgba(34,197,94,.18); color:var(--green); }
+  .tti-action.escalate { background:rgba(239,68,68,.18); color:var(--red); }
+  .tti-action.needs_info { background:rgba(59,130,246,.18); color:var(--blue); }
+  .tti-action.stuck { background:rgba(245,158,11,.18); color:var(--yellow); }
+
+  /* RIGHT PANEL */
+  .thinker-right { flex:1; display:flex; flex-direction:column; gap:14px; overflow-y:auto; min-width:0; }
+
+  /* PIXEL STAGE */
+  .pixel-stage-wrap { position:relative; border-radius:16px; overflow:hidden; border:1px solid var(--border); background:#0a0c14; flex-shrink:0; }
+  #pixelCanvas { display:block; width:100%; height:130px; image-rendering:pixelated; image-rendering:crisp-edges; }
+  .pixel-stage-overlay { position:absolute; inset:0; display:flex; align-items:flex-end; justify-content:space-between; padding:12px 16px; pointer-events:none; background:linear-gradient(to top,rgba(10,12,20,.85) 0%,transparent 60%); }
+  .pixel-stage-info {}
+  .thinker-stage-title { font-size:14px; font-weight:800; color:#fff; margin-bottom:2px; text-shadow:0 1px 4px rgba(0,0,0,.8); }
+  .thinker-stage-sub { font-size:11px; color:rgba(255,255,255,.5); }
+  .thinker-badge { display:inline-block; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; letter-spacing:.5px; }
+  .thinker-badge.respond { background:rgba(34,197,94,.25); color:#4ade80; border:1px solid rgba(34,197,94,.4); }
+  .thinker-badge.escalate { background:rgba(239,68,68,.25); color:#f87171; border:1px solid rgba(239,68,68,.4); }
+  .thinker-badge.needs_info,.thinker-badge.stuck { background:rgba(245,158,11,.25); color:#fbbf24; border:1px solid rgba(245,158,11,.4); }
+
+  /* STEPS STREAM */
+  .thinker-steps-wrap { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:20px; flex:1; }
+  .thinker-stream { display:flex; flex-direction:column; gap:8px; }
+
+  .thinker-step { display:flex; align-items:flex-start; gap:14px; padding:13px 15px; border-radius:12px; border:1px solid transparent; opacity:0; transform:translateX(-16px); transition:opacity .35s ease, transform .35s ease; position:relative; overflow:hidden; }
+  .thinker-step.visible { opacity:1; transform:translateX(0); }
+  .thinker-step::after { content:''; position:absolute; right:0; top:0; bottom:0; width:3px; border-radius:0 12px 12px 0; }
+
+  .thinker-step.done { background:rgba(34,197,94,.05); border-color:rgba(34,197,94,.18); }
+  .thinker-step.done::after { background:var(--green); }
+  .thinker-step.warning { background:rgba(245,158,11,.05); border-color:rgba(245,158,11,.2); }
+  .thinker-step.warning::after { background:var(--yellow); }
+  .thinker-step.thinking-anim { background:rgba(108,99,255,.06); border-color:rgba(108,99,255,.28); animation:step-thinking-glow 1s ease-in-out infinite; }
+  .thinker-step.thinking-anim::after { background:var(--accent); }
+  @keyframes step-thinking-glow { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 12px rgba(108,99,255,.25)} }
+  .thinker-step.blocked { background:rgba(239,68,68,.07); border-color:rgba(239,68,68,.35); animation:step-blocked-flash 1.2s ease-in-out 3; }
+  .thinker-step.blocked::after { background:var(--red); }
+  @keyframes step-blocked-flash { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 18px rgba(239,68,68,.45)} }
+
+  .step-icon-wrap { flex-shrink:0; width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:16px; }
+  .done .step-icon-wrap { background:rgba(34,197,94,.15); }
+  .warning .step-icon-wrap { background:rgba(245,158,11,.15); }
+  .thinking-anim .step-icon-wrap { background:rgba(108,99,255,.18); }
+  .blocked .step-icon-wrap { background:rgba(239,68,68,.15); }
+
+  .step-body { flex:1; min-width:0; }
+  .step-label { font-size:13px; font-weight:700; margin-bottom:3px; }
+  .done .step-label { color:var(--text); }
+  .warning .step-label { color:var(--yellow); }
+  .thinking-anim .step-label { color:var(--accent); }
+  .blocked .step-label { color:var(--red); }
+  .step-detail { font-size:12px; color:var(--muted); line-height:1.55; word-break:break-word; }
+  .typewriter { overflow:hidden; white-space:pre-wrap; word-break:break-word; }
+
+  .step-dots::after { content:''; animation:ellipsis 1.2s steps(4,end) infinite; }
+  @keyframes ellipsis { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%{content:'...'} }
+
+  /* CONNECTOR LINE */
+  .step-connector-line { width:2px; height:14px; background:var(--border); margin:2px auto 2px 15px; border-radius:1px; }
+
+  /* UPGRADE CARD */
+  .thinker-upgrade {
+    margin-top:14px;
+    background:linear-gradient(135deg,rgba(108,99,255,.12),rgba(0,212,170,.08));
+    border:1px solid rgba(108,99,255,.45);
+    border-radius:16px; padding:20px 22px;
+    display:flex; gap:16px; align-items:flex-start;
+    animation:upgrade-pop .5s cubic-bezier(.17,.89,.32,1.28) both;
+    position:relative; overflow:hidden;
+  }
+  .thinker-upgrade::before { content:''; position:absolute; inset:0;
+    background:linear-gradient(90deg,rgba(108,99,255,.06),transparent,rgba(0,212,170,.04));
+    animation:upgrade-shimmer 3s linear infinite; }
+  @keyframes upgrade-shimmer { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }
+  @keyframes upgrade-pop { from{opacity:0;transform:scale(.92) translateY(8px)} to{opacity:1;transform:scale(1) translateY(0)} }
+  .upgrade-icon { font-size:32px; flex-shrink:0; animation:upgrade-bounce .7s ease-in-out infinite alternate; position:relative; z-index:1; }
+  @keyframes upgrade-bounce { from{transform:translateY(0) rotate(-5deg)} to{transform:translateY(-8px) rotate(5deg)} }
+  .upgrade-content { flex:1; position:relative; z-index:1; }
+  .upgrade-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; color:var(--accent); margin-bottom:6px; }
+  .upgrade-text { font-size:14px; color:var(--text); line-height:1.65; font-weight:500; }
+
+  /* CONFETTI BURST */
+  .confetti-piece { position:fixed; width:8px; height:8px; border-radius:2px; pointer-events:none; animation:confetti-fall 1.8s ease-out forwards; z-index:9999; }
+  @keyframes confetti-fall { 0%{opacity:1;transform:translateY(0) rotate(0deg) scale(1)} 100%{opacity:0;transform:translateY(200px) rotate(720deg) scale(.3)} }
+
+  /* REPLAY */
+  .thinker-replay { text-align:center; margin-top:14px; }
+  .replay-btn { background:linear-gradient(135deg,rgba(108,99,255,.2),rgba(0,212,170,.1)); border:1px solid var(--accent); color:var(--accent); padding:9px 24px; border-radius:10px; cursor:pointer; font-size:13px; font-weight:600; transition:all .2s; letter-spacing:.3px; }
+  .replay-btn:hover { background:var(--accent); color:#fff; transform:scale(1.04); box-shadow:0 4px 16px rgba(108,99,255,.35); }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-brand">Valmo <span>L1 Agent</span></div>
+  <div class="mode-wrap">
+    <span class="mode-label">Mode</span>
+    <label class="toggle">
+      <input type="checkbox" id="modeToggle" onchange="toggleMode()">
+      <span class="slider"></span>
+    </label>
+    <span class="mode-status" id="modeStatus">Review</span>
+    <button class="refresh-btn" onclick="loadAll()">Refresh</button>
+  </div>
+</nav>
+
+<main>
+  <!-- PAGE TABS -->
+  <div class="page-tabs">
+    <button class="page-tab active" onclick="switchTab('overview', this)">Overview</button>
+    <button class="page-tab" onclick="switchTab('cxo', this)">⚡ CXO View</button>
+    <button class="page-tab" onclick="switchTab('kt', this)">KT Engine</button>
+    <button class="page-tab" onclick="switchTab('stuck', this)">Stuck Queue <span id="stuckBadge" style="display:none;background:var(--yellow);color:#000;border-radius:10px;font-size:11px;padding:1px 7px;margin-left:4px;"></span></button>
+    <button class="page-tab" onclick="switchTab('health', this)">Health</button>
+    <button class="page-tab" onclick="switchTab('livetest', this)">🔍 Test Ticket</button>
+    <button class="page-tab thinker-tab-btn" onclick="switchTab('thinker', this)">🧠 Thinker</button>
+  </div>
+
+  <!-- ═══ OVERVIEW PANEL ═══════════════════════════════════════════ -->
+  <div class="page-panel active" id="panel-overview">
+    <h2>Overview</h2>
+    <div class="metrics-grid" id="metricsGrid">
+      <div class="loading">Loading metrics...</div>
+    </div>
+    <!-- ROI / Cost Banner -->
+    <div id="roiBanner" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:20px">
+      <div class="loading" style="font-size:13px">Loading cost metrics...</div>
+    </div>
+
+    <!-- Integration Health -->
+    <div id="integrationHealth" style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+        <span style="font-size:18px">🔌</span>
+        <span style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted)">System Integrations</span>
+      </div>
+      <div id="healthChecks" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px">
+        <div class="loading" style="font-size:13px">Checking connections...</div>
+      </div>
+    </div>
+
+    <div class="charts-row">
+      <div class="chart-card">
+        <h3>Actions Distribution</h3>
+        <canvas id="actionChart"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Queue Breakdown</h3>
+        <canvas id="queueChart"></canvas>
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="table-header">
+        <h3>Decision Feed</h3>
+        <div class="filter-tabs">
+          <button class="tab active" onclick="filterDecisions('', this)">All</button>
+          <button class="tab" onclick="filterDecisions('pending', this)">Pending</button>
+          <button class="tab" onclick="filterDecisions('sent', this)">Sent</button>
+          <button class="tab" onclick="filterDecisions('escalate', this)">Escalated</button>
+          <button class="tab" onclick="filterDecisions('stuck', this)">Stuck</button>
+          <button class="tab" id="reprocessAllBtn" onclick="reprocessAllStuck()" style="background:rgba(245,158,11,.15);border-color:var(--yellow);color:var(--yellow)">🔄 Reprocess Stuck</button>
+          <button class="tab" id="reprocessAllKtBtn" onclick="reprocessAllWithKT()" style="background:rgba(108,99,255,.15);border-color:var(--accent);color:var(--accent)">🧠 Reprocess All with KT</button>
+          <button class="tab" id="reenrichBtn" onclick="reenrichDescriptions()" style="background:rgba(108,99,255,.12);border-color:var(--accent);color:var(--accent)">📥 Fetch Full Descriptions</button>
+        </div>
+      </div>
+      <div id="decisionsTable"></div>
+    </div>
+  </div>
+
+  <!-- ═══ CXO VIEW PANEL ═══════════════════════════════════════════ -->
+  <div class="page-panel" id="panel-cxo">
+    <div id="cxoContent"><div class="loading">Loading CXO metrics...</div></div>
+  </div>
+
+  <!-- ═══ KT ENGINE PANEL ═══════════════════════════════════════════ -->
+  <div class="page-panel" id="panel-kt">
+    <div class="kt-form">
+      <h3>Add Knowledge to Agent Brain</h3>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:18px">
+        Type any new rule, SOP update, or trainer instruction below. It goes live immediately — no restart needed.
+        It's also saved to disk so it persists after server restart.
+      </p>
+      <div class="kt-row">
+        <input class="kt-input" id="ktTitle" placeholder="Title (e.g. New loss rule for Q1 2026)">
+        <select class="kt-select" id="ktCategory">
+          <option value="general">General</option>
+          <option value="loss">Losses & Debits</option>
+          <option value="payment">Payments / COD</option>
+          <option value="orders">Orders</option>
+          <option value="escalation">Escalation Rules</option>
+          <option value="qa">Q&A from Trainer</option>
+        </select>
+      </div>
+      <div style="position:relative">
+        <textarea class="kt-textarea" id="ktText" placeholder="Enter the KT rule or SOP update here — or hit the mic and just talk.
+
+Example: 'When a captain says suspicious shipment, always ask what exactly is suspicious before mapping to any scenario. Could be tampered packaging, fraud, wrong contents, or misroute.'"></textarea>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <button class="kt-mic-btn" id="micBtn" onclick="toggleSTT()">🎤 <span id="micLabel">Speak</span></button>
+        <button class="kt-submit" onclick="submitKT()">Add to Agent Brain</button>
+        <span class="kt-stt-status" id="sttStatus"></span>
+        <span class="kt-success" id="ktSuccess" style="display:none">Added successfully!</span>
+      </div>
+    </div>
+
+    <div class="kt-form" style="margin-top:18px">
+      <h3>Stage 0 Domain Onboarding</h3>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+        Activate a queue's structured domain so the agent reasons about it with full context. Use <strong>JSON mode</strong> for proper activation (deterministic, validated). Use <strong>Prose mode</strong> for quick partial additions.
+      </p>
+      <div id="domainQueueStatus" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;font-size:12px"></div>
+
+      <!-- Mode tabs -->
+      <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:14px">
+        <button class="ktmode-tab ktmode-active" data-mode="json" onclick="switchKTMode('json')" style="background:none;border:none;border-bottom:2px solid var(--accent);color:var(--accent);padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600;margin-bottom:-1px">JSON mode (recommended)</button>
+        <button class="ktmode-tab" data-mode="prose" onclick="switchKTMode('prose')" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);padding:8px 16px;cursor:pointer;font-size:13px;margin-bottom:-1px">Prose mode (Gemini-parsed)</button>
+      </div>
+
+      <!-- JSON MODE -->
+      <div id="ktMode-json">
+        <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
+          <select class="kt-select" id="domainTplQueue" style="flex:1;min-width:180px">
+            <option value="">— Pick a queue —</option>
+          </select>
+          <button class="kt-submit" style="background:var(--surface2);border:1px solid var(--border);color:var(--text)" onclick="loadDomainTemplate()">↓ Load template</button>
+        </div>
+        <textarea class="kt-textarea" id="domainJsonText" style="min-height:340px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px" placeholder='Click "Load template" after picking a queue. Then fill in the slots. Lines starting with _ are comments and ignored.'></textarea>
+        <div id="domainValidateOut" style="margin:10px 0;font-size:12px"></div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <button class="kt-submit" style="background:var(--surface2);border:1px solid var(--border);color:var(--text)" onclick="validateDomainJSON()">✓ Validate</button>
+          <button class="kt-submit" id="domainActivateBtn" onclick="submitDomainJSON()" disabled style="opacity:.5">⚡ Activate Queue</button>
+          <span class="kt-success" id="domainJsonSuccess" style="display:none"></span>
+        </div>
+      </div>
+
+      <!-- PROSE MODE -->
+      <div id="ktMode-prose" style="display:none">
+        <div class="kt-row">
+          <select class="kt-select" id="domainQueueKey" style="flex:1">
+            <option value="">— Auto-detect queue from text —</option>
+          </select>
+        </div>
+        <textarea class="kt-textarea" id="domainText" placeholder="Example: 'For the payments queue, the Captain Payment Status query returns columns hub_code, enbolt_id, invoice_no, payment_status and remarks. The remarks column drives the response template — values like Pending E-Sign, Hold Negative, GST Defaulter Hold each map to a specific reply.'"></textarea>
+        <p style="font-size:11px;color:var(--yellow);margin:6px 0">⚠ Prose mode runs your text through Gemini — slots may be missed silently. Prefer JSON mode for full activation.</p>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <button class="kt-submit" onclick="submitDomainKT()">Activate Queue (Prose)</button>
+          <span class="kt-success" id="domainSuccess" style="display:none">Queue activated!</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-card">
+      <div class="table-header">
+        <h3>Recent KT Additions</h3>
+        <button class="refresh-btn" onclick="loadKTList()">Refresh</button>
+      </div>
+      <div id="ktList" style="padding:16px">
+        <div class="loading">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ STUCK QUEUE PANEL ════════════════════════════════════════ -->
+  <div class="page-panel" id="panel-stuck">
+    <div style="margin-bottom:20px">
+      <p style="font-size:13px;color:var(--muted)">
+        These tickets need trainer input. The agent flagged a specific question it couldn't answer from the SOP.
+        Your answer gets added to the agent's knowledge base immediately.
+      </p>
+    </div>
+    <div id="stuckList">
+      <div class="loading">Loading...</div>
+    </div>
+  </div>
+
+  <!-- ═══ TEST TICKET PANEL ═════════════════════════════════════════ -->
+  <div class="page-panel" id="panel-livetest">
+    <h2 style="margin-bottom:16px">Test Live Ticket</h2>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:20px">
+      Enter a Kapture ticket number. Checks DB → scraped cache → live Kapture fetch.
+      Images/attachments in tickets: paste screenshots below if the agent needs them.
+    </p>
+    <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center;flex-wrap:wrap">
+      <input id="liveTicketInput" type="text" placeholder="e.g. 775570064977"
+        style="flex:1;min-width:200px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:15px;background:var(--card);color:var(--text)"
+        onkeydown="if(event.key==='Enter') fetchLiveTicket()">
+      <button class="btn-approve" onclick="fetchLiveTicket()" id="liveTestBtn" style="padding:10px 20px">
+        Analyze Ticket
+      </button>
+    </div>
+
+    <!-- status bar -->
+    <div id="liveTestStatus" style="display:none;padding:10px 16px;border-radius:8px;margin-bottom:16px;font-size:13px;background:var(--card);border:1px solid var(--border)"></div>
+
+    <!-- result card -->
+    <div id="liveTestResult" style="display:none">
+      <div class="decision-card" style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+          <div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:4px" id="ltSource"></div>
+            <div style="font-size:16px;font-weight:600" id="ltTicketId"></div>
+            <div style="font-size:13px;color:var(--muted);margin-top:2px" id="ltHubCode"></div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span id="ltAction" style="font-size:13px;font-weight:600;padding:4px 12px;border-radius:20px"></span>
+            <span id="ltConf" style="font-size:13px;color:var(--muted)"></span>
+          </div>
+        </div>
+        <div style="font-size:13px;margin-bottom:10px"><strong>Scenario:</strong> <span id="ltScenario"></span></div>
+        <div style="font-size:13px;margin-bottom:10px"><strong>Reasoning:</strong> <span id="ltReasoning" style="color:var(--muted)"></span></div>
+        <div id="ltResponseWrap" style="display:none;margin-bottom:10px">
+          <strong style="font-size:13px">Draft Response:</strong>
+          <div id="ltResponse" style="font-size:13px;white-space:pre-wrap;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:6px;max-height:200px;overflow-y:auto"></div>
+        </div>
+        <div id="ltEscWrap" style="display:none;margin-bottom:10px;font-size:13px">
+          <strong>Escalate to:</strong> <span id="ltEscQueue" style="color:var(--yellow)"></span> — <span id="ltEscReason" style="color:var(--muted)"></span>
+        </div>
+        <div id="ltStuckWrap" style="display:none;margin-bottom:10px;font-size:13px">
+          <strong>Missing info:</strong> <span id="ltStuckQ" style="color:var(--accent)"></span>
+        </div>
+        <div id="ltAwbWrap" style="display:none;margin-bottom:10px;font-size:13px">
+          <strong>AWBs found:</strong> <span id="ltAwbs" style="font-family:monospace;color:var(--muted)"></span>
+        </div>
+        <div id="ltAttachWrap" style="display:none;margin-bottom:10px;font-size:13px">
+          <strong>Attachments:</strong>
+          <div id="ltAttachLinks" style="margin-top:4px"></div>
+          <p style="color:var(--accent);font-size:12px;margin-top:4px">⚠ Excel attachments: AWBs inside cannot be auto-read — please paste them manually in the ticket subject/body.</p>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn-view" onclick="viewLiveTicketInThinker()" id="ltThinkerBtn">🧠 View in Thinker</button>
+          <button class="btn-approve" onclick="approveLiveDecision()" id="ltApproveBtn" style="display:none">✓ Approve</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ HEALTH PANEL ══════════════════════════════════════════════ -->
+  <div class="page-panel" id="panel-health">
+    <div style="margin-bottom:16px;display:flex;align-items:center;gap:12px">
+      <button class="btn-view" onclick="loadHealth()">↻ Refresh</button>
+    </div>
+    <div id="healthContent"><div class="loading">Loading...</div></div>
+  </div>
+
+  <!-- ═══ THINKER PANEL ═══════════════════════════════════════════ -->
+  <div class="page-panel" id="panel-thinker">
+    <div class="thinker-layout">
+
+      <!-- LEFT: ticket selector -->
+      <div class="thinker-left">
+        <div class="thinker-left-header">
+          <span class="live-dot"></span> Decision Feed
+        </div>
+        <div class="thinker-ticket-list" id="thinkerList">
+          <div class="loading">Loading...</div>
+        </div>
+      </div>
+
+      <!-- RIGHT: animated stage -->
+      <div class="thinker-right">
+
+        <!-- pixel art stage -->
+        <div class="pixel-stage-wrap">
+          <canvas id="pixelCanvas" height="130"></canvas>
+          <div class="pixel-stage-overlay">
+            <div class="pixel-stage-info">
+              <div class="thinker-stage-title" id="thinkerStageTitle">Pick a ticket to watch me think</div>
+              <div class="thinker-stage-sub" id="thinkerStageSub">← Select any decision from the feed</div>
+            </div>
+            <div id="thinkerBadge"></div>
+          </div>
+        </div>
+
+        <!-- steps stream -->
+        <div class="thinker-steps-wrap" id="thinkerStepsWrap" style="display:none">
+          <div class="thinker-stream" id="thinkerStream"></div>
+          <div class="thinker-upgrade" id="thinkerUpgrade" style="display:none">
+            <div class="upgrade-icon">💡</div>
+            <div class="upgrade-content">
+              <div class="upgrade-label">Upgrade needed</div>
+              <div class="upgrade-text" id="upgradeText"></div>
+            </div>
+          </div>
+          <div class="thinker-replay" id="thinkerReplay" style="display:none">
+            <button onclick="replayThinking()" class="replay-btn">↺ Watch Again</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- DETAIL MODAL -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">✕</button>
+    <h3 id="modalTitle">Ticket Detail</h3>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<!-- THINKER MODAL -->
+<div class="think-overlay" id="thinkModal" onclick="if(event.target===this)closeThinkModal()">
+  <div class="think-modal">
+    <button class="think-modal-close" onclick="closeThinkModal()">✕</button>
+    <div class="think-header">
+      <div class="brain-icon" id="thinkBrain">🧠</div>
+      <div class="think-title" id="thinkTitle">How I think...</div>
+      <div class="think-subtitle" id="thinkSubtitle">Step-by-step reasoning trace</div>
+    </div>
+    <!-- Modal tabs -->
+    <div style="display:flex;gap:8px;margin:0 0 16px 0;border-bottom:1px solid var(--border);padding-bottom:12px">
+      <button class="think-tab active" id="tabSteps" onclick="switchThinkTab('steps')">🔍 Reasoning Steps</button>
+      <button class="think-tab" id="tabLearned" onclick="switchThinkTab('learned')">📚 What I've Learned</button>
+    </div>
+    <div id="thinkPanelSteps">
+      <div class="think-steps" id="thinkSteps"></div>
+    </div>
+    <div id="thinkPanelLearned" style="display:none">
+      <div id="learnedFeed" style="max-height:480px;overflow-y:auto">
+        <div style="color:var(--muted);font-size:13px;padding:20px 0">Loading...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentFilter = '';
+let actionChart = null;
+let queueChart  = null;
+let autonomous  = false;
+let currentDecisionId = null;
+
+// ── API helpers ───────────────────────────────────────────────────
+async function api(path, opts={}) {
+  const r = await fetch('/api' + path, opts);
+  return r.json();
+}
+
+// ── LOAD ALL ─────────────────────────────────────────────────────
+async function loadAll() {
+  await Promise.all([loadMode(), loadStats(), loadDecisions(currentFilter), loadHealth()]);
+}
+
+async function loadHealth() {
+  const el = document.getElementById('healthChecks');
+  if (!el) return;
+  try {
+    const h = await api('/health');
+    if (!h || !h.checks) { el.innerHTML = '<span style="color:var(--muted);font-size:12px">No data</span>'; return; }
+    const checks = h.checks;
+    el.innerHTML = Object.entries(checks).map(([key, c]) => {
+      const ok = c.ok === true;
+      const needs = c.needs_access === true;
+      const color  = ok ? 'rgba(34,197,94,.12)'  : needs ? 'rgba(245,158,11,.10)' : 'rgba(239,68,68,.10)';
+      const border = ok ? 'rgba(34,197,94,.28)'  : needs ? 'rgba(245,158,11,.28)' : 'rgba(239,68,68,.28)';
+      const dot    = ok ? '&#x1F7E2;' : needs ? '&#x1F7E1;' : '&#x1F534;';
+      const statusText  = ok ? 'Connected' : needs ? 'Needs Access' : 'Error';
+      const statusColor = ok ? '#22c55e'   : needs ? '#f59e0b'      : '#ef4444';
+      const icon = c.icon || '';
+      return `<div style="background:${color};border:1px solid ${border};border-radius:10px;padding:12px 14px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:15px">${icon}</span>
+          <span style="font-size:12px;font-weight:600;color:var(--text)">${c.label || key}</span>
+        </div>
+        <div style="font-size:11px;font-weight:600;color:${statusColor};margin-bottom:4px">${dot} ${statusText}</div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.4">${c.note || ''}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    console.error('loadHealth error:', e);
+    el.innerHTML = '<span style="color:var(--muted);font-size:12px">Health check failed: ' + e.message + '</span>';
+  }
+}
+
+// ── MODE ──────────────────────────────────────────────────────────
+async function loadMode() {
+  const d = await api('/mode');
+  autonomous = d.autonomous;
+  document.getElementById('modeToggle').checked = autonomous;
+  const s = document.getElementById('modeStatus');
+  s.textContent = autonomous ? 'Autonomous' : 'Review';
+  s.className = 'mode-status' + (autonomous ? ' autonomous' : '');
+}
+
+async function toggleMode() {
+  autonomous = document.getElementById('modeToggle').checked;
+  await api('/mode', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({autonomous})
+  });
+  const s = document.getElementById('modeStatus');
+  s.textContent = autonomous ? 'Autonomous' : 'Review';
+  s.className = 'mode-status' + (autonomous ? ' autonomous' : '');
+}
+
+// ── STATS + METRICS ──────────────────────────────────────────────
+async function loadStats() {
+  const s = await api('/stats');
+  renderMetrics(s);
+  renderCharts(s);
+}
+
+function renderMetrics(s) {
+  const artDisplay = s.art_minutes > 0
+    ? (s.art_minutes < 60 ? s.art_minutes.toFixed(0) + ' min' : (s.art_minutes/60).toFixed(1) + ' hr')
+    : '—';
+
+  document.getElementById('metricsGrid').innerHTML = `
+    <div class="card"><div class="card-label">Total Tickets</div>
+      <div class="card-value c-accent">${s.total}</div>
+      <div class="card-sub">Today: ${s.today}</div></div>
+
+    <div class="card"><div class="card-label">Auto-Resolution Rate</div>
+      <div class="card-value ${s.auto_resolution_rate >= 60 ? 'c-green' : 'c-yellow'}">${s.auto_resolution_rate}%</div>
+      <div class="card-sub">${s.auto_sent} tickets auto-sent</div></div>
+
+    <div class="card"><div class="card-label">ART</div>
+      <div class="card-value c-accent2">${artDisplay}</div>
+      <div class="card-sub">Avg resolution time</div></div>
+
+    <div class="card"><div class="card-label">TAT Compliance</div>
+      <div class="card-value ${s.sla_compliance >= 85 ? 'c-green' : 'c-red'}">${s.sla_compliance}%</div>
+      <div class="card-sub">${s.sla_breached} SLA breaches</div></div>
+
+    <div class="card"><div class="card-label">Avg Confidence</div>
+      <div class="card-value c-blue">${s.avg_confidence}<span style="font-size:14px;color:var(--muted)">/10</span></div>
+      <div class="card-sub">Agent certainty</div></div>
+
+    <div class="card"><div class="card-label">Pending Review</div>
+      <div class="card-value c-yellow">${s.pending_review}</div>
+      <div class="card-sub">Awaiting approval</div></div>
+
+    <div class="card"><div class="card-label">Escalated</div>
+      <div class="card-value c-red">${s.escalated}</div>
+      <div class="card-sub">Routed to L2</div></div>
+
+    <div class="card"><div class="card-label">Stuck</div>
+      <div class="card-value c-yellow">${s.stuck}</div>
+      <div class="card-sub">Needs trainer input</div></div>
+
+    <div class="card"><div class="card-label">Approved</div>
+      <div class="card-value c-green">${s.approved}</div>
+      <div class="card-sub">By reviewer</div></div>
+
+    <div class="card"><div class="card-label">Rejected</div>
+      <div class="card-value c-red">${s.rejected}</div>
+      <div class="card-sub">Needs rework</div></div>
+  `;
+
+  // ROI Banner
+  const roiMultiplier = s.roi_multiplier || 0;
+  const geminiToday = (s.gemini_cost_today_inr || 0).toFixed(2);
+  const geminiTotal = (s.gemini_cost_total_inr || 0).toFixed(2);
+  const humanEquiv  = (s.human_cost_equiv_inr || 0).toLocaleString();
+  const costSaved   = (s.cost_saved_inr || 0).toLocaleString();
+  const totalTok    = ((s.total_input_tokens || 0) + (s.total_output_tokens || 0)).toLocaleString();
+  document.getElementById('roiBanner').innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+      <span style="font-size:18px">💰</span>
+      <span style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted)">Cost Intelligence</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px">
+      <div style="background:rgba(0,212,170,.08);border:1px solid rgba(0,212,170,.25);border-radius:10px;padding:14px">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px">AI Spend (Gemini)</div>
+        <div style="font-size:22px;font-weight:700;color:var(--accent2)">₹${geminiTotal}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Today: ₹${geminiToday} · ${totalTok} tokens</div>
+      </div>
+      <div style="background:rgba(108,99,255,.08);border:1px solid rgba(108,99,255,.25);border-radius:10px;padding:14px">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px">Human Agent Equiv</div>
+        <div style="font-size:22px;font-weight:700;color:var(--accent)">₹${humanEquiv}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">@₹15/ticket × ${s.total} tickets</div>
+      </div>
+      <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);border-radius:10px;padding:14px">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px">Net Savings</div>
+        <div style="font-size:22px;font-weight:700;color:#22c55e">₹${costSaved}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">vs full manual ops</div>
+      </div>
+      <div style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);border-radius:10px;padding:14px">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px">ROI Multiplier</div>
+        <div style="font-size:22px;font-weight:700;color:var(--yellow)">${roiMultiplier > 0 ? roiMultiplier + 'x' : '—'}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">cheaper than human agents</div>
+      </div>
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--muted)">
+      At 2,000 tickets/day → est. ₹435/day Gemini spend vs ₹30,000/day (20 agents) → <strong style="color:var(--accent2)">69x ROI at scale</strong>
+    </div>
+  `;
+}
+
+function renderCharts(s) {
+  const COLORS = ['#6c63ff','#ef4444','#f59e0b','#3b82f6','#22c55e','#00d4aa'];
+
+  // Action distribution
+  if (actionChart) actionChart.destroy();
+  const actCtx = document.getElementById('actionChart').getContext('2d');
+  actionChart = new Chart(actCtx, {
+    type: 'doughnut',
+    data: {
+      labels: s.action_breakdown.map(a => a.action),
+      datasets: [{ data: s.action_breakdown.map(a => a.count), backgroundColor: COLORS, borderWidth: 0 }]
+    },
+    options: { plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', font: { size: 11 } } } }, cutout: '65%' }
+  });
+
+  // Queue breakdown
+  if (queueChart) queueChart.destroy();
+  const qCtx = document.getElementById('queueChart').getContext('2d');
+  queueChart = new Chart(qCtx, {
+    type: 'bar',
+    data: {
+      labels: s.queue_breakdown.map(q => q.queue.substring(0,15)),
+      datasets: [{ data: s.queue_breakdown.map(q => q.count), backgroundColor: '#6c63ff', borderRadius: 6 }]
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#64748b', font: { size: 11 } }, grid: { color: '#2d3148' } },
+        y: { ticks: { color: '#64748b' }, grid: { color: '#2d3148' } }
+      }
+    }
+  });
+}
+
+// ── DECISIONS TABLE ──────────────────────────────────────────────
+async function loadDecisions(statusFilter='') {
+  currentFilter = statusFilter;
+  const url = '/api/decisions' + (statusFilter ? `?filter=${statusFilter}` : '');
+  const data = await api(url.replace('/api',''));
+  renderTable(data.decisions || []);
+}
+
+function filterDecisions(f, btn) {
+  document.querySelectorAll('.filter-tabs .tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  loadDecisions(f);
+}
+
+function renderTable(decisions) {
+  const el = document.getElementById('decisionsTable');
+  if (!decisions.length) {
+    el.innerHTML = '<div class="empty">No decisions yet. Run test_brain_with_queries.py to populate.</div>';
+    return;
+  }
+  el.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Ticket ID</th><th>Subject</th><th>Queue</th>
+        <th>Action</th><th>Confidence</th><th>Status</th><th>Actions</th>
+      </tr></thead>
+      <tbody>
+        ${decisions.map(d => renderRow(d)).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderRow(d) {
+  const awbs = tryParse(d.awbs, []);
+  const actionBadge = `<span class="badge badge-${d.action}">${d.action}</span>`;
+  const statusBadge = `<span class="badge badge-${d.review_status}">${d.review_status}</span>`;
+  const confBar = d.confidence > 0
+    ? `${d.confidence}/10<span class="conf-bar"><span class="conf-fill" style="width:${d.confidence*10}%"></span></span>`
+    : '—';
+
+  let actionBtns = `<button class="btn-view" onclick="viewDecision(${d.id})">View</button><button class="btn-brain" onclick="openThinker(${d.id})" title="See how I think">🧠</button>`;
+  if (d.review_status === 'pending') {
+    actionBtns += `
+      <button class="btn-approve" onclick="approveDecision(${d.id})">Approve</button>
+      <button class="btn-reject"  onclick="rejectDecision(${d.id})">Reject</button>
+    `;
+  }
+
+  return `<tr>
+    <td><span class="ticket-id">${d.ticket_id}</span></td>
+    <td><div class="subject-text" title="${esc(d.subject)}">${esc(d.subject) || '—'}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">${awbs.slice(0,2).join(', ')}</div></td>
+    <td style="color:var(--muted)">${d.queue || '—'}</td>
+    <td>${actionBadge}</td>
+    <td>${confBar}</td>
+    <td>${statusBadge}</td>
+    <td><div class="action-btns">${actionBtns}</div></td>
+  </tr>`;
+}
+
+// ── MODAL ────────────────────────────────────────────────────────
+function viewDecision(id) {
+  currentDecisionId = id;
+  api(`/decisions/${id}`).then(d => {
+    document.getElementById('modalTitle').textContent = `Ticket ${d.ticket_id}`;
+    const awbs = tryParse(d.awbs, []);
+    const missing = tryParse(d.missing_fields, []);
+    let body = `
+      <div class="modal-section">
+        <label>Ticket ID</label>
+        <p style="font-family:monospace;font-size:14px;font-weight:700;letter-spacing:.5px">${d.ticket_id}
+          ${d.task_id ? `&nbsp;<a href="https://valmostagging.kapturecrm.com/nui/tickets/assigned_to_me/5/-1/0/detail/${d.task_id}/${d.ticket_id}" target="_blank" style="font-size:11px;color:var(--accent);text-decoration:none;font-weight:500">🔗 Open in Kapture ↗</a>` : ''}
+        </p>
+      </div>
+      <div class="modal-section">
+        <label>Queue / Action</label>
+        <p>${d.queue || '—'} — <strong>${d.action}</strong> (confidence: ${d.confidence}/10)</p>
+      </div>
+      <div class="modal-section">
+        <label>Captain's Message</label>
+        ${d.description && d.description !== d.subject
+          ? `<p style="max-height:300px;overflow-y:auto;white-space:pre-wrap;border:1px solid var(--border);border-radius:6px;padding:10px;font-size:13px;line-height:1.6">${esc(d.description)}</p>`
+          : `<p style="max-height:200px;overflow-y:auto;white-space:pre-wrap;border:1px solid var(--border);border-radius:6px;padding:10px;font-size:13px;line-height:1.6">${esc(d.subject) || '—'}</p>
+             <div style="font-size:11px;color:var(--muted);margin-top:4px">⚠ Full message not stored — <a href="https://valmostagging.kapturecrm.com/nui/tickets/assigned_to_me/5/-1/0/detail/${d.task_id}/${d.ticket_id}" target="_blank" style="color:var(--accent)">view in Kapture</a> for complete text.</div>`
+        }
+      </div>`;
+
+    if (d.clean_problem) body += `<div class="modal-section"><label>Agent's Understanding</label><p style="color:var(--accent);font-style:italic;font-size:13px">${esc(d.clean_problem)}</p></div>`;
+    if (awbs.length) body += `<div class="modal-section"><label>AWBs</label><p>${awbs.join(', ')}</p></div>`;
+    if (d.scenario) body += `<div class="modal-section"><label>Scenario Identified</label><p style="font-family:monospace;font-weight:600">${esc(d.scenario)}</p></div>`;
+    if (d.reasoning) body += `<div class="modal-section"><label>Reasoning</label><p>${esc(d.reasoning)}</p></div>`;
+    if (d.response_draft) body += `<div class="modal-section"><label>Draft Reply to Captain</label><p>${esc(d.response_draft)}</p></div>`;
+    if (d.escalation_reason) body += `<div class="modal-section"><label>Escalation Reason → ${d.escalation_queue}</label><p>${esc(d.escalation_reason)}</p></div>`;
+    if (d.stuck_question) body += `<div class="modal-section"><label>Stuck — Agent Question</label><p>${esc(d.stuck_question)}</p></div>`;
+    if (missing.length) body += `<div class="modal-section"><label>Missing Fields</label><p>${missing.join(', ')}</p></div>`;
+
+    if (d.review_status === 'pending') {
+      body += `
+        <div class="modal-section">
+          <label>Reviewer Note (optional)</label>
+          <textarea id="reviewNote" placeholder="Add a note..."></textarea>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-approve" onclick="approveDecision(${d.id}, true)">Approve & Send</button>
+          <button class="btn-reject"  onclick="rejectDecision(${d.id}, true)">Reject</button>
+          ${d.action === 'respond' && d.response_draft ? `<button class="btn-view" style="margin-left:auto" onclick="sendReply(${d.id})">📤 Send to Kapture</button>` : ''}
+          ${d.action === 'stuck' || d.action === 'needs_info' ? `<button class="btn-view" style="margin-left:auto" onclick="reprocessDecision(${d.id})">🔄 Reprocess with new SOPs</button>` : ''}
+        </div>`;
+    } else {
+      body += `<div class="modal-section"><label>Status</label><p>${d.review_status}${d.reviewer_note ? ' — ' + esc(d.reviewer_note) : ''}</p></div>`;
+      if (d.action === 'respond' && d.response_draft) {
+        const sentLabel = d.review_status === 'sent' ? '✓ Sent — Resend to Kapture' : '📤 Send Reply to Kapture';
+        body += `
+        <div class="modal-actions">
+          <button class="btn-approve" id="sendReplyBtn" onclick="sendReply(${d.id})">${sentLabel}</button>
+        </div>`;
+      }
+    }
+    body += `<div id="sendReplyStatus" style="margin-top:10px;font-size:13px;color:var(--muted);"></div>`;
+
+    document.getElementById('modalBody').innerHTML = body;
+    document.getElementById('modal').classList.add('open');
+  });
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('open');
+  currentDecisionId = null;
+}
+
+// ── APPROVE / REJECT ─────────────────────────────────────────────
+async function approveDecision(id, fromModal=false) {
+  const note = fromModal ? (document.getElementById('reviewNote')?.value || '') : '';
+  await api(`/decisions/${id}/approve`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({note})
+  });
+  if (fromModal) closeModal();
+  loadAll();
+}
+
+async function rejectDecision(id, fromModal=false) {
+  const note = fromModal ? (document.getElementById('reviewNote')?.value || '') : '';
+  await api(`/decisions/${id}/reject`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({note})
+  });
+  if (fromModal) closeModal();
+  loadAll();
+}
+
+// ── SEND REPLY ───────────────────────────────────────────────────
+async function sendReply(id) {
+  const btn = document.getElementById('sendReplyBtn');
+  const status = document.getElementById('sendReplyStatus');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ Sending…';
+  status.textContent = 'Launching browser session, logging in to Kapture…';
+  try {
+    const r = await fetch(`/api/decisions/${id}/send-reply`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({dry_run: false})
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.status === 'sent') {
+      btn.textContent = '✅ Sent';
+      status.textContent = 'Reply sent successfully.';
+      status.style.color = '#4caf50';
+    } else {
+      btn.textContent = '❌ Failed';
+      btn.disabled = false;
+      status.textContent = data.detail || data.error || JSON.stringify(data);
+      status.style.color = '#f44336';
+    }
+  } catch(e) {
+    btn.textContent = '❌ Error';
+    btn.disabled = false;
+    status.textContent = String(e);
+    status.style.color = '#f44336';
+  }
+}
+
+// ── TAB SWITCHING ────────────────────────────────────────────────
+function switchTab(name, btn) {
+  document.querySelectorAll('.page-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.page-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+  if (name === 'kt')      { loadKTList(); loadDomainQueues(); }
+  if (name === 'stuck')   loadStuckQueue();
+  if (name === 'cxo')     loadCXO();
+  if (name === 'health')  loadHealth();
+  if (name === 'thinker') loadThinker();
+}
+
+
+// ── CXO VIEW ─────────────────────────────────────────────────────
+async function loadCXO() {
+  const el = document.getElementById('cxoContent');
+  el.innerHTML = '<div class="loading">Fetching CXO metrics...</div>';
+  const m = await api('/cxo');
+  el.innerHTML = renderCXO(m);
+}
+
+function gradeColor(grade, target) {
+  if (grade === null || grade === undefined) return 'c-muted';
+  if (grade >= target) return 'c-green';
+  if (grade >= target - 0.5) return 'c-yellow';
+  return 'c-red';
+}
+
+function rateColor(rate, target, lowerIsBetter=true) {
+  if (lowerIsBetter) {
+    if (rate <= target * 0.7) return 'c-green';
+    if (rate <= target) return 'c-yellow';
+    return 'c-red';
+  } else {
+    if (rate >= target) return 'c-green';
+    if (rate >= target * 0.7) return 'c-yellow';
+    return 'c-red';
+  }
+}
+
+function krPill(rate, target, lowerIsBetter=true) {
+  const ok = lowerIsBetter ? rate <= target : rate >= target;
+  const warn = lowerIsBetter ? rate <= target * 1.3 : rate >= target * 0.7;
+  const cls = ok ? 'kr-pill-pass' : (warn ? 'kr-pill-warn' : 'kr-pill-fail');
+  const label = ok ? '✓ ON TARGET' : (warn ? '⚠ WATCH' : '✗ BREACH');
+  return `<span class="kr-pill ${cls}">${label}</span>`;
+}
+
+function gradeBar(grade, max=5) {
+  if (grade === null || grade === undefined) return '';
+  const pct = Math.min(grade / max * 100, 100);
+  const col = grade >= 3.5 ? '#22c55e' : grade >= 2.5 ? '#f59e0b' : '#ef4444';
+  return `<div class="grade-bar-wrap"><div class="grade-bar">
+    <div class="grade-bar-fill" style="width:${pct}%;background:${col}"></div>
+  </div></div>`;
+}
+
+function artFmt(mins) {
+  if (!mins) return '—';
+  if (mins < 60) return mins.toFixed(0) + ' min';
+  return (mins / 60).toFixed(1) + ' hr';
+}
+
+function renderCXO(m) {
+  const noData = m.total_processed === 0;
+  const resGrade    = m.resolution_grade;
+  const revGrade    = m.reversal_grade;
+  const nonRevGrade = m.non_reversal_grade;
+
+  // ── Grades section ──────────────────────────────────────────────
+  const gradesHtml = `
+  <div class="cxo-section">
+    <div class="cxo-section-title">Resolution Quality — Permutation Simulation Grade</div>
+    <div class="cxo-grades">
+      <div class="grade-card primary">
+        <div class="grade-label">Overall Resolution Grade</div>
+        <div class="grade-value ${gradeColor(resGrade, m.kr_resolution_target)}">${resGrade !== null ? resGrade : '—'}<span class="grade-denom">/5</span></div>
+        ${gradeBar(resGrade)}
+        <div class="grade-target ${gradeColor(resGrade, m.kr_resolution_target)}">
+          KR Target: ≥${m.kr_resolution_target}/5 &nbsp;${resGrade !== null ? krPill(resGrade, m.kr_resolution_target, false) : ''}
+        </div>
+        <div class="grade-bench">Benchmark: ${m.benchmark_grade}/5 all · ${m.benchmark_grade_nosop}/5 excl. no-SOP</div>
+      </div>
+
+      <div class="grade-card">
+        <div class="grade-label">Reversal Grade <span style="font-size:10px;color:var(--muted)">(W-LD / Loss tickets)</span></div>
+        <div class="grade-value ${gradeColor(revGrade, m.kr_reversal_target)}">${revGrade !== null ? revGrade : '—'}<span class="grade-denom">/5</span></div>
+        ${gradeBar(revGrade)}
+        <div class="grade-target ${gradeColor(revGrade, m.kr_reversal_target)}">
+          KR Target: ≥${m.kr_reversal_target}/5 &nbsp;${revGrade !== null ? krPill(revGrade, m.kr_reversal_target, false) : ''}
+        </div>
+        <div class="grade-bench">${m.reversal_count} reversal tickets processed</div>
+      </div>
+
+      <div class="grade-card">
+        <div class="grade-label">Non-Reversal Grade <span style="font-size:10px;color:var(--muted)">(Other queues)</span></div>
+        <div class="grade-value ${gradeColor(nonRevGrade, 3.0)}">${nonRevGrade !== null ? nonRevGrade : '—'}<span class="grade-denom">/5</span></div>
+        ${gradeBar(nonRevGrade)}
+        <div class="grade-target ${gradeColor(nonRevGrade, 3.0)}">
+          KR Target: ≥3.0/5 &nbsp;${nonRevGrade !== null ? krPill(nonRevGrade, 3.0, false) : ''}
+        </div>
+        <div class="grade-bench">${m.non_reversal_count} non-reversal tickets processed</div>
+      </div>
+    </div>
+  </div>`;
+
+  // ── KR Rates ────────────────────────────────────────────────────
+  const krHtml = `
+  <div class="cxo-section">
+    <div class="cxo-section-title">Key Result Thresholds</div>
+    <div class="kr-grid">
+      <div class="kr-card">
+        <div class="kr-name">C4 Rate (Unresolved)</div>
+        <div class="kr-val ${rateColor(m.c4_rate, m.kr_c4_target)}">${m.c4_rate}%</div>
+        <div class="kr-tgt">Target: &lt;${m.kr_c4_target}% &nbsp; ${krPill(m.c4_rate, m.kr_c4_target)}</div>
+      </div>
+      <div class="kr-card">
+        <div class="kr-name">System Fail Rate</div>
+        <div class="kr-val ${rateColor(m.system_fail_rate, m.kr_sysfail_target)}">${m.system_fail_rate}%</div>
+        <div class="kr-tgt">Target: &lt;${m.kr_sysfail_target}% &nbsp; ${krPill(m.system_fail_rate, m.kr_sysfail_target)}</div>
+      </div>
+      <div class="kr-card">
+        <div class="kr-name">Reopen Rate</div>
+        <div class="kr-val ${rateColor(m.reopen_rate, m.kr_reopen_target)}">${m.reopen_rate}%</div>
+        <div class="kr-tgt">Target: &lt;${m.kr_reopen_target}% &nbsp; ${krPill(m.reopen_rate, m.kr_reopen_target)}</div>
+      </div>
+      <div class="kr-card">
+        <div class="kr-name">Auto-Resolution Rate</div>
+        <div class="kr-val ${rateColor(m.auto_resolution_rate, 50, false)}">${m.auto_resolution_rate}%</div>
+        <div class="kr-tgt">Tickets resolved without human touch</div>
+      </div>
+      <div class="kr-card">
+        <div class="kr-name">TAT / SLA Compliance</div>
+        <div class="kr-val ${rateColor(m.sla_compliance, 85, false)}">${m.sla_compliance}%</div>
+        <div class="kr-tgt">Target: ≥85% &nbsp; ${krPill(m.sla_compliance, 85, false)}</div>
+      </div>
+      <div class="kr-card">
+        <div class="kr-name">Avg Resolution Time (ART)</div>
+        <div class="kr-val c-accent2">${artFmt(m.art_minutes)}</div>
+        <div class="kr-tgt">Ticket to resolved</div>
+      </div>
+      <div class="kr-card">
+        <div class="kr-name">Avg Confidence</div>
+        <div class="kr-val c-blue">${m.avg_confidence}<span style="font-size:14px;color:var(--muted)">/10</span></div>
+        <div class="kr-tgt">Agent certainty score</div>
+      </div>
+      <div class="kr-card">
+        <div class="kr-name">Total Processed</div>
+        <div class="kr-val c-accent">${m.total_processed}</div>
+        <div class="kr-tgt">${m.respond_count} respond · ${m.escalate_count} escalate · ${m.stuck_count + m.needs_info_count} stuck</div>
+      </div>
+    </div>
+  </div>`;
+
+  // ── P&L Financial ───────────────────────────────────────────────
+  const plHtml = `
+  <div class="cxo-section">
+    <div class="cxo-section-title">P&amp;L Impact — Cost Savings vs Human L1 Agents</div>
+    <div class="pl-grid">
+      <div class="pl-card highlight">
+        <div class="pl-label">Cost Saved (Cumulative)</div>
+        <div class="pl-value c-accent2">₹${m.cost_saved_inr.toLocaleString()}</div>
+        <div class="pl-sub">vs human L1 @ ₹15/ticket</div>
+      </div>
+      <div class="pl-card highlight">
+        <div class="pl-label">Monthly Savings Projection</div>
+        <div class="pl-value c-green">₹${m.monthly_saving_inr.toLocaleString()}</div>
+        <div class="pl-sub">~${m.monthly_ticket_projection.toLocaleString()} tickets/month</div>
+      </div>
+      <div class="pl-card">
+        <div class="pl-label">Headcount Equivalent</div>
+        <div class="pl-value c-accent">${m.headcount_equiv}</div>
+        <div class="pl-sub">human L1 agents replaced (~65 tickets/person/day)</div>
+      </div>
+      <div class="pl-card">
+        <div class="pl-label">Net Saving / Ticket</div>
+        <div class="pl-value c-yellow">₹${m.net_saving_per_ticket}</div>
+        <div class="pl-sub">Human ₹15 − Agent API ₹0.5</div>
+      </div>
+      <div class="pl-card">
+        <div class="pl-label">Annual Projection</div>
+        <div class="pl-value c-green">₹${(m.monthly_saving_inr * 12).toLocaleString()}</div>
+        <div class="pl-sub">at current run rate</div>
+      </div>
+    </div>
+  </div>`;
+
+  // ── SOP Sheet / Satisfaction ────────────────────────────────────
+  const sat = m.satisfaction;
+  let satHtml = '';
+  if (sat.available && sat.header && sat.header.length > 0) {
+    const visibleCols = sat.header.slice(0, 5);  // cap at 5 cols for readability
+    satHtml = `
+    <div class="cxo-section">
+      <div class="cxo-section-title">SOP Coverage &amp; Live Data (${sat.total_rows} rows)
+        <a class="cxo-csat-link" href="${sat.url}" target="_blank" style="margin-left:12px;">Open Sheet ↗</a>
+      </div>
+      <div class="cxo-csat">
+        <table>
+          <thead><tr>${visibleCols.map(h => `<th>${esc(h)}</th>`).join('')}${sat.header.length > 5 ? `<th style="color:var(--muted)">+${sat.header.length-5} more cols</th>` : ''}</tr></thead>
+          <tbody>${sat.rows.slice(0, 15).map(r => `
+            <tr>${visibleCols.map((_,i) => `<td>${esc((r[i]||'').substring(0,100))}</td>`).join('')}${sat.header.length > 5 ? '<td>…</td>' : ''}</tr>
+          `).join('')}</tbody>
+        </table>
+        ${sat.total_rows > 15 ? `<p style="font-size:11px;color:var(--muted);padding:8px 10px">Showing 15 of ${sat.total_rows} rows. <a class="cxo-csat-link" href="${sat.url}" target="_blank">View all ↗</a></p>` : ''}
+      </div>
+    </div>`;
+  } else {
+    satHtml = `
+    <div class="cxo-section">
+      <div class="cxo-section-title">Live Sheets Data</div>
+      <div class="cxo-csat" style="text-align:center;padding:32px">
+        <p style="color:var(--muted);margin-bottom:12px">Data from Google Sheets</p>
+        <a class="cxo-csat-link" href="${sat.url}" target="_blank">Open Sheet ↗</a>
+        ${sat.error ? `<p style="color:var(--red);font-size:11px;margin-top:8px">${esc(sat.error)}</p>` : ''}
+      </div>
+    </div>`;
+  }
+
+  return noData
+    ? `<div class="empty">No decisions processed yet. Run populate_dashboard.py to generate data.</div>`
+    : gradesHtml + krHtml + plHtml + satHtml;
+}
+
+// ── KT ENGINE ────────────────────────────────────────────────────
+// ── Speech-to-Text for KT Engine ─────────────────────────────────
+let _sttRecognizer = null;
+let _sttRunning = false;
+
+function toggleSTT() {
+  if (_sttRunning) {
+    stopSTT();
+  } else {
+    startSTT();
+  }
+}
+
+function startSTT() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    document.getElementById('sttStatus').textContent = 'Not supported in this browser — use Chrome.';
+    return;
+  }
+
+  _sttRecognizer = new SpeechRecognition();
+  _sttRecognizer.lang = 'en-IN';       // Indian English — better for Hinglish ops terms
+  _sttRecognizer.continuous = true;    // keep recording until stopped
+  _sttRecognizer.interimResults = true;
+
+  const btn   = document.getElementById('micBtn');
+  const label = document.getElementById('micLabel');
+  const status = document.getElementById('sttStatus');
+  const ta    = document.getElementById('ktText');
+
+  btn.classList.add('recording');
+  label.textContent = 'Stop';
+  status.textContent = 'Listening...';
+
+  let finalTranscript = ta.value;  // append to whatever is already typed
+
+  _sttRecognizer.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) {
+        finalTranscript += (finalTranscript ? ' ' : '') + t;
+      } else {
+        interim = t;
+      }
+    }
+    ta.value = finalTranscript + (interim ? ' ' + interim : '');
+    ta.scrollTop = ta.scrollHeight;
+    status.textContent = interim ? `Hearing: "${interim.slice(-40)}"` : 'Listening...';
+  };
+
+  _sttRecognizer.onerror = (e) => {
+    status.textContent = `Error: ${e.error}. Try again.`;
+    stopSTT();
+  };
+
+  _sttRecognizer.onend = () => {
+    if (_sttRunning) _sttRecognizer.start();  // auto-restart if still supposed to be on
+  };
+
+  _sttRunning = true;
+  _sttRecognizer.start();
+}
+
+function stopSTT() {
+  _sttRunning = false;
+  if (_sttRecognizer) {
+    _sttRecognizer.onend = null;
+    _sttRecognizer.stop();
+    _sttRecognizer = null;
+  }
+  const btn   = document.getElementById('micBtn');
+  const label = document.getElementById('micLabel');
+  const status = document.getElementById('sttStatus');
+  btn.classList.remove('recording');
+  label.textContent = 'Speak';
+  status.textContent = 'Done — review and submit.';
+  setTimeout(() => { status.textContent = ''; }, 3000);
+}
+
+async function submitKT() {
+  const text = document.getElementById('ktText').value.trim();
+  if (!text) return;
+  const title    = document.getElementById('ktTitle').value.trim();
+  const category = document.getElementById('ktCategory').value;
+  const r = await api('/kt/add', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text, title, category})
+  });
+  if (r.status === 'added') {
+    document.getElementById('ktText').value = '';
+    document.getElementById('ktTitle').value = '';
+    const ok = document.getElementById('ktSuccess');
+    ok.style.display = 'inline';
+    setTimeout(() => ok.style.display = 'none', 3000);
+    loadKTList();
+  }
+}
+
+// ── Stage 0 Domain Onboarding ───────────────────────────────────
+async function loadDomainQueues() {
+  try {
+    const data = await api('/kt/queues');
+    const proseSel = document.getElementById('domainQueueKey');
+    const tplSel   = document.getElementById('domainTplQueue');
+    const status   = document.getElementById('domainQueueStatus');
+    if (!data.queues) return;
+
+    // Prose-mode dropdown (preserves "auto-detect" option)
+    if (proseSel) {
+      const current = proseSel.value;
+      proseSel.innerHTML = '<option value="">— Auto-detect queue from text —</option>';
+      data.queues.forEach(q => {
+        const opt = document.createElement('option');
+        opt.value = q.queue_key;
+        opt.textContent = `${q.queue_key}  (${q.status})`;
+        proseSel.appendChild(opt);
+      });
+      proseSel.value = current;
+    }
+
+    // JSON-mode dropdown (no auto-detect, real picker only)
+    if (tplSel) {
+      const current = tplSel.value;
+      tplSel.innerHTML = '<option value="">— Pick a queue —</option>';
+      data.queues.forEach(q => {
+        const opt = document.createElement('option');
+        opt.value = q.queue_key;
+        opt.textContent = `${q.queue_key}  (${q.status})`;
+        tplSel.appendChild(opt);
+      });
+      tplSel.value = current;
+    }
+
+    // Status pills
+    if (status) {
+      status.innerHTML = data.queues.map(q => {
+        const isComplete = q.status === 'complete';
+        const bg = isComplete ? 'rgba(34,197,94,.15)' : 'rgba(250,204,21,.15)';
+        const fg = isComplete ? '#22c55e' : '#facc15';
+        const dot = isComplete ? '●' : '○';
+        return `<span style="background:${bg};color:${fg};padding:4px 10px;border-radius:12px;border:1px solid ${fg}33">${dot} ${q.queue_key} · ${q.metabase_query_count} queries</span>`;
+      }).join('');
+    }
+  } catch (e) { console.warn('loadDomainQueues failed', e); }
+}
+
+function switchKTMode(mode) {
+  document.getElementById('ktMode-json').style.display  = (mode === 'json')  ? 'block' : 'none';
+  document.getElementById('ktMode-prose').style.display = (mode === 'prose') ? 'block' : 'none';
+  document.querySelectorAll('.ktmode-tab').forEach(t => {
+    const active = t.dataset.mode === mode;
+    t.style.borderBottomColor = active ? 'var(--accent)' : 'transparent';
+    t.style.color = active ? 'var(--accent)' : 'var(--muted)';
+    t.style.fontWeight = active ? '600' : '400';
+  });
+}
+
+async function loadDomainTemplate() {
+  const qkey = document.getElementById('domainTplQueue').value;
+  if (!qkey) { alert('Pick a queue first'); return; }
+  try {
+    const r = await api('/kt/template/' + encodeURIComponent(qkey));
+    document.getElementById('domainJsonText').value = JSON.stringify(r.template, null, 2);
+    document.getElementById('domainValidateOut').innerHTML = '<span style="color:var(--muted)">Template loaded. Fill in the slots, then click Validate.</span>';
+    document.getElementById('domainActivateBtn').disabled = true;
+    document.getElementById('domainActivateBtn').style.opacity = '.5';
+  } catch (e) { alert('Failed to load template: ' + (e.message || e)); }
+}
+
+async function validateDomainJSON() {
+  const txt = document.getElementById('domainJsonText').value.trim();
+  const out = document.getElementById('domainValidateOut');
+  const btn = document.getElementById('domainActivateBtn');
+
+  let payload;
+  try { payload = JSON.parse(txt); }
+  catch (e) {
+    out.innerHTML = `<span style="color:var(--red)">✗ Invalid JSON: ${esc(e.message)}</span>`;
+    btn.disabled = true; btn.style.opacity = '.5';
+    return;
+  }
+
+  try {
+    const r = await api('/kt/validate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({payload})
+    });
+    let html = '';
+    if (r.errors && r.errors.length) {
+      html += `<div style="color:var(--red);margin-bottom:6px"><strong>✗ ${r.errors.length} error(s) — fix before activating:</strong></div>`;
+      html += '<ul style="margin:0 0 8px 18px;color:var(--red)">' + r.errors.map(e => `<li>${esc(e)}</li>`).join('') + '</ul>';
+    }
+    if (r.warnings && r.warnings.length) {
+      html += `<div style="color:var(--yellow);margin-bottom:6px"><strong>⚠ ${r.warnings.length} warning(s):</strong></div>`;
+      html += '<ul style="margin:0 0 8px 18px;color:var(--yellow)">' + r.warnings.map(w => `<li>${esc(w)}</li>`).join('') + '</ul>';
+    }
+    if (r.ok) {
+      html = `<div style="color:var(--green)"><strong>✓ Validation passed.</strong> Click Activate Queue to commit.</div>` + html;
+      btn.disabled = false; btn.style.opacity = '1';
+    } else {
+      btn.disabled = true; btn.style.opacity = '.5';
+    }
+    out.innerHTML = html;
+  } catch (e) {
+    out.innerHTML = `<span style="color:var(--red)">Validation request failed: ${esc(e.message || String(e))}</span>`;
+  }
+}
+
+async function submitDomainJSON() {
+  const txt = document.getElementById('domainJsonText').value.trim();
+  let payload;
+  try { payload = JSON.parse(txt); }
+  catch (e) { alert('JSON parse error: ' + e.message); return; }
+
+  // Strip _comment fields and unfilled stubs at the client side too (server also does this)
+  try {
+    const r = await api('/kt/structured', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (r.status === 'ok' || r.status === 'partial') {
+      const ok = document.getElementById('domainJsonSuccess');
+      ok.textContent = `✓ ${payload.queue_key} activated`;
+      ok.style.color = 'var(--green)';
+      ok.style.display = 'inline';
+      setTimeout(() => ok.style.display = 'none', 5000);
+      loadDomainQueues();
+      loadKTList();
+    } else {
+      alert('Failed: ' + JSON.stringify(r));
+    }
+  } catch (e) {
+    alert('Failed: ' + (e.message || e));
+  }
+}
+
+async function submitDomainKT() {
+  const text = document.getElementById('domainText').value.trim();
+  if (!text) return;
+  const queue_hint = document.getElementById('domainQueueKey').value;
+  try {
+    const r = await api('/kt/structured-from-text', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text, queue_hint})
+    });
+    if (r.status === 'ok') {
+      document.getElementById('domainText').value = '';
+      const ok = document.getElementById('domainSuccess');
+      ok.textContent = `${r.parsed.queue_key} activated!`;
+      ok.style.display = 'inline';
+      setTimeout(() => ok.style.display = 'none', 4000);
+      loadDomainQueues();
+      loadKTList();
+    } else {
+      alert('Failed: ' + JSON.stringify(r));
+    }
+  } catch (e) {
+    alert('Failed: ' + (e.message || e));
+  }
+}
+
+async function loadKTList() {
+  const data = await api('/kt/list');
+  const el = document.getElementById('ktList');
+  if (!data.entries || !data.entries.length) {
+    el.innerHTML = '<div class="empty">No KT additions yet. Use the form above to teach the agent.</div>';
+    return;
+  }
+  el.innerHTML = data.entries.map(e => `
+    <div class="kt-log-entry">
+      <span class="kt-tag">${e.category}</span>
+      <strong style="font-size:13px">${esc(e.title)}</strong>
+      <span class="kt-time">${e.added_at ? e.added_at.slice(0,16).replace('T',' ') : ''}</span>
+      <div class="kt-preview">${esc(e.text_preview)}${e.chars > 200 ? '...' : ''} <span style="color:var(--muted)">(${e.chars} chars)</span></div>
+    </div>
+  `).join('');
+}
+
+// ── STUCK QUEUE ──────────────────────────────────────────────────
+async function loadStuckQueue() {
+  const data = await api('/stuck');
+  const el = document.getElementById('stuckList');
+  const badge = document.getElementById('stuckBadge');
+  const items = (data.items || []);
+  badge.style.display = items.length ? 'inline' : 'none';
+  if (badge.style.display !== 'none') badge.textContent = items.length;
+
+  if (!items.length) {
+    el.innerHTML = '<div class="empty">No stuck tickets right now. The agent is handling everything!</div>';
+    return;
+  }
+  el.innerHTML = items.map((item, i) => `
+    <div class="stuck-item">
+      <div class="stuck-ticket">Ticket: ${item.ticket_id} &nbsp;|&nbsp; Queue: ${esc(item.queue||'?')} &nbsp;|&nbsp; ${(item.timestamp||'').slice(0,16).replace('T',' ')}</div>
+      <div style="font-size:13px;margin-bottom:8px;font-weight:600">${esc(item.subject||'')}</div>
+      <div class="stuck-question">${esc(item.question || item.stuck_question || 'No question recorded')}</div>
+      <textarea id="stuckAns_${i}" placeholder="Type your answer here..."></textarea>
+      <button class="btn-answer" onclick="answerStuck('${item.ticket_id}', ${i})">Submit Answer</button>
+    </div>
+  `).join('');
+}
+
+async function answerStuck(ticketId, idx) {
+  const answer = document.getElementById(`stuckAns_${idx}`).value.trim();
+  if (!answer) return;
+  await api('/stuck/answer', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ticket_id: ticketId, answer})
+  });
+  loadStuckQueue();
+}
+
+// ── HEALTH ────────────────────────────────────────────────────────
+async function loadHealth() {
+  const el = document.getElementById('healthContent');
+  el.innerHTML = '<div class="loading">Checking integrations...</div>';
+  const h = await api('/health');
+  const checks = h.checks || {};
+  const icon = ok => ok ? '✅' : '❌';
+  let html = `<div style="display:grid;gap:12px;max-width:540px">`;
+  for (const [name, info] of Object.entries(checks)) {
+    const detail = info.error || info.note || (info.chunks != null ? `${info.chunks} chunks` : '') || (info.decisions != null ? `${info.decisions} decisions` : '');
+    html += `
+      <div style="background:var(--surface2);border-radius:10px;padding:14px 18px;display:flex;align-items:center;gap:14px">
+        <span style="font-size:22px">${icon(info.ok)}</span>
+        <div>
+          <div style="font-weight:600;font-size:14px;text-transform:capitalize">${name}</div>
+          ${detail ? `<div style="font-size:12px;color:var(--muted);margin-top:3px">${esc(detail)}</div>` : ''}
+        </div>
+      </div>`;
+  }
+  html += `</div>`;
+  html += `<p style="font-size:12px;color:var(--muted);margin-top:16px">Overall: ${h.healthy ? '✅ All systems healthy' : '⚠️ One or more checks failed'}</p>`;
+  el.innerHTML = html;
+}
+
+// ── REPROCESS ────────────────────────────────────────────────────
+async function reprocessAllWithKT() {
+  const btn = document.getElementById('reprocessAllKtBtn');
+  const total = document.getElementById('totalCount')?.textContent || '?';
+  if (!confirm(`Reprocess ALL ${total} tickets with the latest KT knowledge?\nThis will use Gemini for each ticket.`)) return;
+  btn.textContent = '⏳ Reprocessing all…';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/decisions/reprocess-all', { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    btn.textContent = `✅ ${data.processed || 0} done — ${data.improved || 0} improved`;
+    btn.style.color = 'var(--green)';
+    btn.style.borderColor = 'var(--green)';
+    setTimeout(() => { btn.textContent = '🧠 Reprocess All with KT'; btn.disabled = false; btn.style.color = ''; btn.style.borderColor = ''; loadAll(); }, 4000);
+  } catch(e) {
+    btn.textContent = '❌ Failed';
+    btn.disabled = false;
+  }
+}
+
+async function reprocessAllStuck() {
+  const btn = document.getElementById('reprocessAllBtn');
+  btn.textContent = '⏳ Reprocessing…';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/decisions/reprocess-all-stuck', { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    btn.textContent = `✅ Done — ${data.improved || 0} improved`;
+    btn.style.color = 'var(--green)';
+    btn.style.borderColor = 'var(--green)';
+    setTimeout(() => { loadAll(); }, 800);
+  } catch(e) {
+    btn.textContent = '❌ Failed';
+    btn.disabled = false;
+  }
+}
+
+async function reenrichDescriptions() {
+  const btn = document.getElementById('reenrichBtn');
+  btn.textContent = '⏳ Fetching…';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/decisions/reenrich', { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (data.status === 'skipped') {
+      btn.textContent = '⚠ Set KAPTURE_SESSION_COOKIE in .env';
+      btn.style.color = 'var(--yellow)';
+    } else {
+      btn.textContent = `✅ ${data.updated}/${data.total} updated`;
+      btn.style.color = 'var(--green)';
+      setTimeout(() => loadAll(), 800);
+    }
+  } catch(e) {
+    btn.textContent = '❌ Failed';
+  }
+  btn.disabled = false;
+}
+
+async function reprocessDecision(id) {
+  const statusEl = document.getElementById('sendReplyStatus');
+  if (statusEl) { statusEl.textContent = '🔄 Reprocessing with updated knowledge base...'; statusEl.style.color = 'var(--accent)'; }
+  try {
+    const r = await fetch(`/api/decisions/${id}/reprocess`, { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok) {
+      if (statusEl) {
+        statusEl.textContent = `✅ Done — new decision: ${data.action?.toUpperCase()} (${data.confidence}/10)`;
+        statusEl.style.color = data.action === 'respond' ? 'var(--green)' : 'var(--yellow)';
+      }
+      setTimeout(() => { closeModal(); loadAll(); }, 1200);
+    } else {
+      if (statusEl) { statusEl.textContent = `❌ ${data.detail || 'Failed'}`; statusEl.style.color = 'var(--red)'; }
+    }
+  } catch(e) {
+    if (statusEl) { statusEl.textContent = `❌ ${e}`; statusEl.style.color = 'var(--red)'; }
+  }
+}
+
+// ── THINKER ──────────────────────────────────────────────────────
+async function openThinker(id) {
+  const overlay = document.getElementById('thinkModal');
+  const brain   = document.getElementById('thinkBrain');
+  const stepsEl = document.getElementById('thinkSteps');
+  const title   = document.getElementById('thinkTitle');
+  const sub     = document.getElementById('thinkSubtitle');
+
+  stepsEl.innerHTML = '';
+  brain.classList.remove('done');
+  title.textContent = 'How I think...';
+  sub.textContent   = 'Loading reasoning trace…';
+  overlay.classList.add('open');
+
+  try {
+    const data = await api(`/decisions/${id}/thinking`);
+    sub.textContent = `Ticket ${data.ticket_id} · Decision: ${(data.action||'').toUpperCase()}`;
+    renderThinkingSteps(data.steps);
+  } catch(e) {
+    stepsEl.innerHTML = `<div style="color:var(--red);padding:16px">Failed to load thinking steps: ${e}</div>`;
+  }
+}
+
+function closeThinkModal() {
+  document.getElementById('thinkModal').classList.remove('open');
+}
+
+function renderThinkingSteps(steps) {
+  const container = document.getElementById('thinkSteps');
+  const brain     = document.getElementById('thinkBrain');
+  container.innerHTML = '';
+
+  steps.forEach((step, i) => {
+    const isLast = i === steps.length - 1;
+    const div = document.createElement('div');
+    div.className = `think-step status-${step.status}`;
+
+    let upgradeHtml = '';
+    if (step.upgrade) {
+      upgradeHtml = `<div class="upgrade-card"><p>${step.upgrade}</p></div>`;
+    }
+
+    const hasDetail = step.detail && step.detail.trim().length > 0;
+    div.innerHTML = `
+      <div class="step-left">
+        <div class="step-icon">${step.icon}</div>
+        ${isLast ? '' : '<div class="step-connector"></div>'}
+      </div>
+      <div class="step-body" ${hasDetail ? `onclick="toggleStep(this)" title="Click to expand"` : ''}>
+        <div class="step-label">${esc(step.label)}${hasDetail ? ' <span class="step-expand-btn">▾</span>' : ''}</div>
+        ${hasDetail ? `<div class="step-detail">${esc(step.detail.slice(0, 120))}${step.detail.length > 120 ? '…' : ''}</div>` : ''}
+        ${hasDetail ? `<div class="step-full-detail">${esc(step.detail)}</div>` : ''}
+        ${upgradeHtml}
+      </div>`;
+    container.appendChild(div);
+
+    // Staggered fade-in
+    setTimeout(() => div.classList.add('visible'), 120 + i * 220);
+  });
+
+  // Stop pulse when all steps are in
+  const allDone = steps.every(s => s.status !== 'thinking');
+  if (allDone) {
+    setTimeout(() => brain.classList.add('done'), 120 + steps.length * 220 + 200);
+  }
+}
+
+// ── UTILS ────────────────────────────────────────────────────────
+function tryParse(s, def) { try { return JSON.parse(s); } catch { return def; } }
+function decodeHtml(s) {
+  // Decode HTML entities that arrive as literal text from Kapture (e.g. &amp; → &, &nbsp; → space)
+  return (s||'').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/\u00a0/g,' ');
+}
+function esc(s) { const d=decodeHtml(s); return d.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
+document.getElementById('modal').addEventListener('click', e => { if (e.target === document.getElementById('modal')) closeModal(); });
+
+// ── PIXEL ART AGENT ──────────────────────────────────────────────
+const PA = {
+  P: 3, // pixel size (each "dot" = 3×3 canvas px)
+  HAIR:'#3d2b1f', SKIN:'#f4c48c', EYE:'#111', SHIRT:'#6c63ff',
+  PANTS:'#2d3148', SHOE:'#111', MOUTH:'#c0503a', PAPER:'#e8e0ff',
+  STAR:'#fbbf24', GROUND:'#1a1d2e', GRID:'#1e2236',
+  BG:'#0a0c14', GLOW:'rgba(108,99,255,0.18)',
+
+  // 10×14 sprite: 0=trans 1=hair 2=skin 3=eye 4=shirt 5=pants 6=shoe 7=mouth
+  SPRITE:[
+    [0,0,1,1,1,1,1,1,0,0],
+    [0,1,1,1,1,1,1,1,1,0],
+    [0,1,2,2,2,2,2,2,1,0],
+    [0,1,2,3,2,2,3,2,1,0],
+    [0,1,2,2,2,2,2,2,1,0],
+    [0,0,2,2,7,7,2,2,0,0],
+    [0,0,0,2,2,2,2,0,0,0],
+    [0,4,4,4,4,4,4,4,4,0],
+    [2,4,4,4,4,4,4,4,4,2],
+    [2,4,4,4,4,4,4,4,4,2],
+    [0,0,5,5,5,5,5,5,0,0],
+    [0,0,5,5,0,0,5,5,0,0],
+    [0,0,5,5,0,0,5,5,0,0],
+    [0,0,6,6,0,0,6,6,0,0],
+  ],
+  // arms-up pose (celebrating)
+  SPRITE_ARMS_UP:[
+    [0,0,1,1,1,1,1,1,0,0],
+    [0,1,1,1,1,1,1,1,1,0],
+    [0,1,2,2,2,2,2,2,1,0],
+    [0,1,2,3,2,2,3,2,1,0],
+    [0,1,2,2,2,2,2,2,1,0],
+    [0,0,2,2,7,7,2,2,0,0],
+    [2,0,0,2,2,2,2,0,0,2],
+    [0,4,4,4,4,4,4,4,4,0],
+    [4,4,4,4,4,4,4,4,4,4],
+    [0,4,4,4,4,4,4,4,4,0],
+    [0,0,5,5,5,5,5,5,0,0],
+    [0,0,5,5,0,0,5,5,0,0],
+    [0,0,5,5,0,0,5,5,0,0],
+    [0,0,6,6,0,0,6,6,0,0],
+  ],
+  // sad pose (head down)
+  SPRITE_SAD:[
+    [0,0,1,1,1,1,1,1,0,0],
+    [0,1,1,1,1,1,1,1,1,0],
+    [0,1,2,2,2,2,2,2,1,0],
+    [0,1,2,3,2,2,3,2,1,0],
+    [0,1,2,2,2,2,2,2,1,0],
+    [0,0,2,7,2,2,7,2,0,0],
+    [0,0,0,2,2,2,2,0,0,0],
+    [0,4,4,4,4,4,4,4,4,0],
+    [0,2,4,4,4,4,4,4,2,0],
+    [0,0,2,4,4,4,4,2,0,0],
+    [0,0,5,5,5,5,5,5,0,0],
+    [0,0,5,5,0,0,5,5,0,0],
+    [0,0,5,5,0,0,5,5,0,0],
+    [0,0,6,6,0,0,6,6,0,0],
+  ],
+
+  COLOR_MAP: { 1:'#3d2b1f',2:'#f4c48c',3:'#111',4:'#6c63ff',5:'#2d3148',6:'#111',7:'#c0503a' },
+
+  drawChar(ctx, x, y, sprite, flipX=false) {
+    const rows = sprite || PA.SPRITE;
+    rows.forEach((row, ri) => {
+      row.forEach((cell, ci) => {
+        if (!cell) return;
+        ctx.fillStyle = PA.COLOR_MAP[cell];
+        const dx = flipX ? x + (row.length - 1 - ci) * PA.P : x + ci * PA.P;
+        ctx.fillRect(dx, y + ri * PA.P, PA.P, PA.P);
+      });
+    });
+  },
+
+  drawPaper(ctx, x, y) {
+    ctx.fillStyle = '#e8e0ff';
+    ctx.fillRect(x, y, 24, 30);
+    ctx.fillStyle = '#8b5cf6';
+    for(let i=0;i<4;i++) { ctx.fillRect(x+3, y+6+i*6, 18, 1); }
+    ctx.fillStyle = '#ff6b6b';
+    ctx.fillRect(x, y, 24, 4);
+  },
+
+  drawThoughtBubble(ctx, x, y, frame) {
+    const dots = Math.floor(frame / 8) % 4;
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.beginPath(); ctx.ellipse(x, y, 22, 14, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.beginPath(); ctx.ellipse(x-18, y+10, 7, 5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x-24, y+16, 4, 3, 0, 0, Math.PI*2); ctx.fill();
+    // dots inside
+    ctx.fillStyle = '#a78bfa';
+    for(let i=0;i<3;i++) {
+      const alpha = i < dots ? 1 : 0.2;
+      ctx.globalAlpha = alpha;
+      ctx.fillRect(x - 10 + i*10, y - 4, 4, 4);
+    }
+    ctx.globalAlpha = 1;
+  },
+
+  drawStar(ctx, x, y, size) {
+    ctx.fillStyle = PA.STAR;
+    for(let i=-size;i<=size;i++) {
+      ctx.fillRect(x+i*PA.P, y, PA.P, PA.P);
+      ctx.fillRect(x, y+i*PA.P, PA.P, PA.P);
+    }
+  },
+
+  drawGround(ctx, w, h) {
+    // Background
+    ctx.fillStyle = PA.BG;
+    ctx.fillRect(0, 0, w, h);
+    // Grid lines
+    ctx.strokeStyle = PA.GRID;
+    ctx.lineWidth = 1;
+    for(let x=0;x<w;x+=20){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); }
+    for(let y=0;y<h;y+=20){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+    // Ground line
+    ctx.fillStyle = '#1e2236';
+    ctx.fillRect(0, h-8, w, 8);
+    ctx.fillStyle = '#6c63ff';
+    ctx.fillRect(0, h-9, w, 1);
+    // Stars/dots in bg
+    ctx.fillStyle = 'rgba(108,99,255,0.4)';
+    [[40,20],[120,15],[200,25],[280,18],[380,22],[480,14],[560,26],[640,19],[720,23]].forEach(([sx,sy]) => {
+      ctx.fillRect(sx, sy, 2, 2);
+    });
+  }
+};
+
+// ── PIXEL AGENT ANIMATOR ─────────────────────────────────────────
+class PixelAgentScene {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx    = canvas.getContext('2d');
+    this.ctx.imageSmoothingEnabled = false;
+    this.frame  = 0;
+    this.state  = 'idle'; // idle | walking | reading | thinking | celebrate | sad | escalate
+    this.agentX = -40;
+    this.agentY = 0;
+    this.targetX = 0;
+    this.paperX = 0;
+    this.walking = false;
+    this.walkFrame = 0;
+    this.stars  = [];
+    this._raf   = null;
+    this.resize();
+    this._loop();
+  }
+
+  resize() {
+    const w = this.canvas.parentElement?.offsetWidth || 600;
+    this.canvas.width = w;
+    this.W = w;
+    this.H = 130;
+    this.groundY = this.H - 8 - PA.P * 14; // char height = 14 rows × 3px
+    this.agentY  = this.groundY;
+    this.paperX  = Math.floor(w * 0.55);
+    if (this.state === 'idle') this.agentX = Math.floor(w * 0.25);
+    this.targetX = Math.floor(w * 0.35);
+  }
+
+  setState(s) {
+    this.state = s;
+    if (s === 'walking') { this.walking = true; }
+    else { this.walking = false; }
+    if (s === 'celebrate') {
+      for(let i=0;i<12;i++) this.stars.push({
+        x: 20 + Math.random()*(this.W-40),
+        y: 10 + Math.random()*60,
+        life: 40 + Math.random()*30,
+        vx: (Math.random()-.5)*3,
+        vy: -1 - Math.random()*2,
+        size: 1,
+        color: ['#fbbf24','#6c63ff','#00d4aa','#f87171','#a78bfa'][Math.floor(Math.random()*5)]
+      });
+    }
+  }
+
+  _loop() {
+    this._raf = requestAnimationFrame(() => this._loop());
+    this.frame++;
+    this._update();
+    this._draw();
+  }
+
+  _update() {
+    // walk toward target
+    if (this.walking) {
+      const speed = 2;
+      const dx = this.targetX - this.agentX;
+      if (Math.abs(dx) > speed) {
+        this.agentX += Math.sign(dx) * speed;
+        this.walkFrame++;
+      } else {
+        this.agentX = this.targetX;
+        this.walking = false;
+        this.walkFrame = 0;
+      }
+    }
+    // update stars
+    this.stars = this.stars.filter(s => s.life > 0);
+    this.stars.forEach(s => { s.x += s.vx; s.y += s.vy; s.vy += 0.08; s.life--; });
+  }
+
+  _draw() {
+    const {ctx, W, H, frame, agentX, agentY} = this;
+    PA.drawGround(ctx, W, H);
+
+    // Paper/ticket
+    PA.drawPaper(ctx, this.paperX, agentY + 4);
+
+    // Agent bob (idle/reading/thinking)
+    let bobY = 0;
+    if (!this.walking && this.state !== 'celebrate') {
+      bobY = Math.round(Math.sin(frame * 0.08) * 1.5);
+    }
+
+    // Walk legs: alternate foot lift
+    let sprite = PA.SPRITE;
+    if (this.state === 'celebrate') sprite = PA.SPRITE_ARMS_UP;
+    if (this.state === 'sad')       sprite = PA.SPRITE_SAD;
+
+    // Celebrate jump
+    let jumpY = 0;
+    if (this.state === 'celebrate') {
+      jumpY = Math.round(Math.abs(Math.sin(frame * 0.2)) * -14);
+    }
+
+    const flipX = this.state === 'escalate' || agentX < this.targetX - 10;
+    PA.drawChar(ctx, agentX, agentY + bobY + jumpY, sprite, flipX);
+
+    // Thought bubble when thinking
+    if (this.state === 'thinking') {
+      PA.drawThoughtBubble(ctx, agentX + 35, agentY - 20, frame);
+    }
+
+    // Stars when celebrating
+    this.stars.forEach(s => {
+      ctx.fillStyle = s.color;
+      ctx.globalAlpha = s.life / 60;
+      ctx.fillRect(s.x, s.y, 4, 4);
+    });
+    ctx.globalAlpha = 1;
+
+    // "?" over agent when needs_info
+    if (this.state === 'blocked') {
+      const alpha = 0.5 + Math.sin(frame * 0.1) * 0.5;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = 'bold 14px monospace';
+      ctx.fillText('?!', agentX + 12, agentY - 8);
+      ctx.globalAlpha = 1;
+    }
+
+    // Arrow shooting right when escalate
+    if (this.state === 'escalate') {
+      const ax = ((frame * 3) % (W + 20)) - 10;
+      ctx.fillStyle = '#f87171';
+      ctx.fillRect(ax, agentY + 20, 14, 4);
+      ctx.fillRect(ax + 10, agentY + 17, 4, 4);
+      ctx.fillRect(ax + 10, agentY + 27, 4, 4);
+    }
+  }
+
+  destroy() { if (this._raf) cancelAnimationFrame(this._raf); }
+}
+
+let _pixelScene = null;
+function _initPixelScene() {
+  const canvas = document.getElementById('pixelCanvas');
+  if (!canvas) return;
+  if (_pixelScene) _pixelScene.destroy();
+  _pixelScene = new PixelAgentScene(canvas);
+  window.addEventListener('resize', () => _pixelScene?.resize());
+}
+
+// ── THINKER ──────────────────────────────────────────────────────
+let _thinkerCurrentId = null;
+let _thinkerTimers = [];
+
+function _thinkerDelay(ms) {
+  return new Promise(resolve => {
+    const t = setTimeout(resolve, ms);
+    _thinkerTimers.push(t);
+  });
+}
+function _thinkerCancelAll() {
+  _thinkerTimers.forEach(clearTimeout);
+  _thinkerTimers = [];
+}
+
+function _setRunner(state) {} // replaced by pixel scene
+
+function _confettiBurst() {
+  const colors = ['#6c63ff','#00d4aa','#f59e0b','#ef4444','#22c55e','#a855f7'];
+  const emojis = ['🎉','⭐','✨','💥','🎊'];
+  for (let i = 0; i < 22; i++) {
+    const el = document.createElement('div');
+    el.className = 'confetti-piece';
+    el.style.cssText = `
+      left:${30 + Math.random()*40}vw;
+      top:${20 + Math.random()*20}vh;
+      background:${colors[Math.floor(Math.random()*colors.length)]};
+      animation-delay:${Math.random()*.5}s;
+      animation-duration:${1.2+Math.random()*.8}s;
+    `;
+    if (Math.random() > .6) { el.style.background='none'; el.textContent = emojis[Math.floor(Math.random()*emojis.length)]; el.style.fontSize='18px'; }
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 2500);
+  }
+}
+
+async function _typewrite(el, text, speed=18) {
+  el.textContent = '';
+  for (let i = 0; i < text.length; i++) {
+    el.textContent += text[i];
+    if (i % 3 === 0) await _thinkerDelay(speed);
+  }
+}
+
+async function loadThinker() {
+  _initPixelScene();
+  const list = document.getElementById('thinkerList');
+  const data = await api('/decisions?limit=40');
+  const decs = data.decisions || [];
+  if (!decs.length) { list.innerHTML = '<div class="empty" style="padding:24px;text-align:center">No decisions yet — run the live agent!</div>'; return; }
+
+  list.innerHTML = decs.map(d => `
+    <div class="thinker-ticket-item" id="tti-${d.id}" onclick="playThinking(${d.id})">
+      <div class="tti-id">#${d.ticket_id}</div>
+      <div class="tti-subject">${esc(d.subject || '—')}</div>
+      <div class="tti-meta">
+        <span class="tti-queue">${d.queue || '?'}</span>
+        <span class="tti-action ${d.action}">${(d.action||'?').toUpperCase()}</span>
+        <span style="font-size:10px;color:var(--muted);margin-left:auto;flex-shrink:0">${d.confidence}/10</span>
+      </div>
+    </div>
+  `).join('');
+
+  if (decs[0]) setTimeout(() => playThinking(decs[0].id), 600);
+}
+
+async function playThinking(decisionId) {
+  _thinkerCancelAll();
+  _thinkerCurrentId = decisionId;
+
+  document.querySelectorAll('.thinker-ticket-item').forEach(el => el.classList.remove('active'));
+  const sel = document.getElementById('tti-' + decisionId);
+  if (sel) { sel.classList.add('active'); sel.scrollIntoView({block:'nearest',behavior:'smooth'}); }
+
+  const stream    = document.getElementById('thinkerStream');
+  const upgrade   = document.getElementById('thinkerUpgrade');
+  const replay    = document.getElementById('thinkerReplay');
+  const stepsWrap = document.getElementById('thinkerStepsWrap');
+  const title     = document.getElementById('thinkerStageTitle');
+  const sub       = document.getElementById('thinkerStageSub');
+  const badge     = document.getElementById('thinkerBadge');
+
+  stream.innerHTML = '';
+  upgrade.style.display = 'none';
+  replay.style.display  = 'none';
+  stepsWrap.style.display = 'block';
+  badge.innerHTML = '';
+
+  // agent walks in from left
+  if (_pixelScene) {
+    _pixelScene.agentX = -40;
+    _pixelScene.targetX = Math.floor(_pixelScene.W * 0.32);
+    _pixelScene.setState('walking');
+  }
+
+  const data  = await api('/decisions/' + decisionId + '/thinking');
+  const steps = data.steps || [];
+  const dec   = data.decision || {};
+
+  title.textContent = `Ticket ${dec.ticket_id || '—'}`;
+  sub.textContent   = `${dec.queue || '—'} · ${new Date(dec.created_at||'').toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}`;
+
+  const hasBlock   = steps.some(s => s.status === 'blocked');
+  const isResolved = steps.some(s => s.label?.includes('RESPOND'));
+
+  for (let i = 0; i < steps.length; i++) {
+    await _thinkerDelay(i === 0 ? 300 : 680);
+    if (_thinkerCurrentId !== decisionId) return;
+
+    const s          = steps[i];
+    const isBlocked  = s.status === 'blocked';
+    const isWarn     = s.status === 'warning';
+    const isThinking = s.status === 'thinking';
+    const cls        = isBlocked ? 'blocked' : isThinking ? 'thinking-anim' : isWarn ? 'warning' : 'done';
+
+    // add connector line between steps
+    if (i > 0) {
+      const line = document.createElement('div');
+      line.className = 'step-connector-line';
+      stream.appendChild(line);
+    }
+
+    const el = document.createElement('div');
+    el.className = `thinker-step ${cls}`;
+    const hasD = !!s.detail;
+    el.innerHTML = `
+      <div class="step-icon-wrap">${s.icon || '•'}</div>
+      <div class="step-body" ${hasD && !isThinking ? `onclick="toggleStep(this)" title="Click to expand"` : ''}>
+        <div class="step-label">${esc(s.label)}${isThinking ? ' <span class="step-dots"></span>' : (hasD ? ' <span class="step-expand-btn">▾</span>' : '')}</div>
+        ${hasD ? `<div class="step-detail" id="step-detail-${i}"></div>` : ''}
+        ${hasD && !isThinking ? `<div class="step-full-detail" id="step-full-${i}"></div>` : ''}
+      </div>
+    `;
+    stream.appendChild(el);
+    await _thinkerDelay(20);
+    el.classList.add('visible');
+
+    // typewrite the detail
+    if (s.detail) {
+      await _thinkerDelay(120);
+      const detailEl = document.getElementById('step-detail-' + i);
+      if (detailEl) await _typewrite(detailEl, s.detail, 12);
+    }
+
+    // Populate hidden full-detail for click-to-expand (after typewrite completes)
+    if (s.detail && !isThinking) {
+      const fullEl = document.getElementById('step-full-' + i);
+      if (fullEl) fullEl.textContent = s.detail;
+    }
+
+    // agent reacts to each step
+    if (_pixelScene) {
+      if (isThinking) _pixelScene.setState('thinking');
+      else if (cls === 'done') _pixelScene.setState('reading');
+    }
+
+    stream.scrollTop = stream.scrollHeight;
+
+    if (isBlocked) {
+      if (_pixelScene) _pixelScene.setState('blocked');
+      await _thinkerDelay(700);
+      if (_thinkerCurrentId !== decisionId) return;
+      document.getElementById('upgradeText').textContent = s.upgrade || '';
+      upgrade.style.display = 'flex';
+    }
+  }
+
+  // final state drives pixel scene
+  if (hasBlock) {
+    if (_pixelScene) _pixelScene.setState('sad');
+    badge.innerHTML = `<span class="thinker-badge needs_info">NEEDS UPGRADE</span>`;
+  } else if (isResolved) {
+    if (_pixelScene) _pixelScene.setState('celebrate');
+    badge.innerHTML = `<span class="thinker-badge respond">RESOLVED ✓</span>`;
+    _confettiBurst();
+  } else {
+    if (_pixelScene) _pixelScene.setState('escalate');
+    badge.innerHTML = `<span class="thinker-badge escalate">ESCALATED ↑</span>`;
+  }
+
+  replay.style.display = 'block';
+  setTimeout(() => { if(_pixelScene) _pixelScene.setState('idle'); }, 5000);
+}
+
+function replayThinking() {
+  if (_thinkerCurrentId) playThinking(_thinkerCurrentId);
+}
+
+// ── STEP EXPAND (click to reveal full detail) ─────────────────────
+function toggleStep(bodyEl) {
+  bodyEl.parentElement.classList.toggle('step-expanded');
+}
+
+// ── THINK MODAL TABS ─────────────────────────────────────────────
+function switchThinkTab(tab) {
+  document.getElementById('tabSteps').classList.toggle('active', tab === 'steps');
+  document.getElementById('tabLearned').classList.toggle('active', tab === 'learned');
+  document.getElementById('thinkPanelSteps').style.display  = tab === 'steps'   ? '' : 'none';
+  document.getElementById('thinkPanelLearned').style.display = tab === 'learned' ? '' : 'none';
+  if (tab === 'learned') loadLearnedFeed();
+}
+
+// ── WHAT I'VE LEARNED FEED ────────────────────────────────────────
+async function loadLearnedFeed() {
+  const el = document.getElementById('learnedFeed');
+  if (!el) return;
+  el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:20px 0">Loading knowledge base...</div>';
+  try {
+    const data = await api('/learning/log');
+    const entries = data.entries || [];
+    if (!entries.length) {
+      el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:20px 0">No learned entries yet. Approve some tickets to start building memory.</div>';
+      return;
+    }
+    el.innerHTML = entries.map((e, idx) => {
+      const isTicket  = e.type === 'ticket';
+      const isTrainer = e.type === 'trainer';
+      const icon      = isTicket ? '🎟️' : isTrainer ? '🗣️' : '📄';
+      const srcClass  = isTicket ? 'ticket' : isTrainer ? 'trainer' : '';
+      const how       = isTicket
+        ? `Learnt by looking at a real ticket`
+        : isTrainer
+        ? `Told by management / trainer`
+        : `From base SOP document`;
+      const tags = (e.applicable || []).map(t =>
+        `<span class="learned-tag">${t}</span>`
+      ).join('');
+      const when = e.added_at ? `<span style="font-size:10px;color:var(--muted);margin-left:8px">${e.added_at.slice(0,16).replace('T',' ')}</span>` : '';
+      return `
+        <div class="learned-entry type-${e.type}" id="learned-${idx}">
+          <div class="learned-header">
+            <div>
+              <span class="learned-source ${srcClass}">${icon} ${e.source_label || e.type}</span>${when}
+              <div style="font-size:11px;color:var(--muted);margin-top:3px;font-style:italic">${how}</div>
+            </div>
+            <div class="learned-tags">${tags}</div>
+          </div>
+          <div class="learned-summary">${esc(e.summary || '').slice(0,180)}${(e.summary||'').length > 180 ? '…' : ''}</div>
+          ${(e.full_text||'').length > (e.summary||'').length
+            ? `<span class="learned-toggle" onclick="toggleLearned(${idx})">▾ Show full</span>
+               <div class="learned-full">${esc(e.full_text || '')}</div>`
+            : ''}
+        </div>`;
+    }).join('');
+  } catch(err) {
+    el.innerHTML = `<div style="color:var(--red);font-size:12px">Error: ${err.message}</div>`;
+  }
+}
+
+function toggleLearned(idx) {
+  const entry  = document.getElementById('learned-' + idx);
+  const toggle = entry.querySelector('.learned-toggle');
+  entry.classList.toggle('learned-expanded');
+  toggle.textContent = entry.classList.contains('learned-expanded') ? '▴ Show less' : '▾ Show full';
+}
+
+// ── INIT ─────────────────────────────────────────────────────────
+loadAll();
+// Also preload stuck count for badge
+(async () => {
+  const data = await api('/stuck');
+  const items = data.items || [];
+  const badge = document.getElementById('stuckBadge');
+  if (items.length) { badge.style.display = 'inline'; badge.textContent = items.length; }
+})();
+setInterval(loadAll, 30000); // auto-refresh every 30s
+
+// ── Live Ticket Test ─────────────────────────────────────────────
+let _ltDbId = null;
+let _ltPollTimer = null;
+
+const ACTION_COLORS = {
+  respond: '#22c55e', escalate: '#f59e0b',
+  needs_info: '#3b82f6', stuck: '#ef4444'
+};
+
+async function fetchLiveTicket() {
+  const tid = (document.getElementById('liveTicketInput').value || '').trim();
+  if (!tid) return;
+  const btn = document.getElementById('liveTestBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Analyzing…';
+  document.getElementById('liveTestStatus').style.display = 'block';
+  document.getElementById('liveTestStatus').textContent = 'Checking DB and cache…';
+  document.getElementById('liveTestResult').style.display = 'none';
+  _ltDbId = null;
+  if (_ltPollTimer) { clearInterval(_ltPollTimer); _ltPollTimer = null; }
+
+  try {
+    const r = await fetch('/api/ticket/fetch-live', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ticket_id: tid})
+    });
+    const d = await r.json();
+
+    if (d.source === 'db' || d.source === 'cache') {
+      // Immediate result
+      renderLiveResult(d);
+    } else if (d.source === 'live_fetch') {
+      // Background job — poll
+      document.getElementById('liveTestStatus').textContent =
+        '🔄 Fetching from Kapture live… (logging in, searching ticket, extracting data)';
+      _ltPollTimer = setInterval(() => pollLiveJob(d.job_id, tid), 2000);
+    } else if (d.error) {
+      showLiveError(d.error);
+    }
+  } catch(e) {
+    showLiveError(String(e));
+  }
+}
+
+async function pollLiveJob(jobId, tid) {
+  try {
+    const r = await fetch(`/api/ticket/job/${jobId}`);
+    const d = await r.json();
+    if (d.status === 'done') {
+      clearInterval(_ltPollTimer); _ltPollTimer = null;
+      renderLiveResult({source: 'live', ticket_id: tid, ...d});
+    } else if (d.status === 'error') {
+      clearInterval(_ltPollTimer); _ltPollTimer = null;
+      showLiveError(d.error || 'Unknown error during Kapture fetch');
+    }
+    // else still running — keep polling
+  } catch(e) { /* keep polling */ }
+}
+
+function renderLiveResult(d) {
+  const decision = d.decision || d;
+  const src = {db:'Found in DB', cache:'Found in scraped cache', live:'Live Kapture fetch'}[d.source] || d.source;
+  const action = decision.action || '';
+  const color = ACTION_COLORS[action] || '#888';
+
+  document.getElementById('ltSource').textContent = `Source: ${src}`;
+  document.getElementById('ltTicketId').textContent = `Ticket #${d.ticket_id}`;
+  document.getElementById('ltHubCode').textContent = d.hub_code ? `Hub: ${d.hub_code}` : '';
+  document.getElementById('ltAction').textContent = action.toUpperCase();
+  document.getElementById('ltAction').style.cssText = `font-size:13px;font-weight:600;padding:4px 12px;border-radius:20px;background:${color}22;color:${color};border:1px solid ${color}`;
+  document.getElementById('ltConf').textContent = `Confidence: ${decision.confidence}/10`;
+  document.getElementById('ltScenario').textContent = decision.scenario || decision.scenario_identified || '—';
+  document.getElementById('ltReasoning').textContent = decision.reasoning || '—';
+
+  const resp = decision.response_draft || decision.response_to_captain || '';
+  document.getElementById('ltResponseWrap').style.display = resp ? '' : 'none';
+  document.getElementById('ltResponse').textContent = resp;
+
+  const escQ = decision.escalation_queue || '';
+  document.getElementById('ltEscWrap').style.display = escQ ? '' : 'none';
+  document.getElementById('ltEscQueue').textContent = escQ;
+  document.getElementById('ltEscReason').textContent = decision.escalation_reason || '';
+
+  const stuckQ = decision.stuck_question || '';
+  document.getElementById('ltStuckWrap').style.display = stuckQ ? '' : 'none';
+  document.getElementById('ltStuckQ').textContent = stuckQ;
+
+  const awbs = d.awbs || [];
+  document.getElementById('ltAwbWrap').style.display = awbs.length ? '' : 'none';
+  document.getElementById('ltAwbs').textContent = awbs.join(', ');
+
+  const attUrls = d.attachment_urls || [];
+  document.getElementById('ltAttachWrap').style.display = attUrls.length ? '' : 'none';
+  if (attUrls.length) {
+    document.getElementById('ltAttachLinks').innerHTML = attUrls.map(u => {
+      const name = u.split('/').pop().split('?')[0];
+      const isExcel = /\.(xlsx?|csv)/i.test(name);
+      return `<a href="${esc(u)}" target="_blank" style="color:var(--accent);font-size:12px;display:block;margin-bottom:2px">
+        ${isExcel ? '📊' : '📎'} ${esc(name)}
+      </a>`;
+    }).join('');
+  }
+
+  _ltDbId = decision.db_id || (d.decision && d.decision.db_id) || null;
+  document.getElementById('ltApproveBtn').style.display = _ltDbId ? '' : 'none';
+  document.getElementById('liveTestStatus').style.display = 'none';
+  document.getElementById('liveTestResult').style.display = '';
+  document.getElementById('liveTestBtn').disabled = false;
+  document.getElementById('liveTestBtn').textContent = 'Analyze Ticket';
+}
+
+function showLiveError(msg) {
+  const s = document.getElementById('liveTestStatus');
+  s.style.display = 'block';
+  s.style.color = 'var(--red, #ef4444)';
+  s.textContent = '✗ ' + msg;
+  document.getElementById('liveTestBtn').disabled = false;
+  document.getElementById('liveTestBtn').textContent = 'Analyze Ticket';
+}
+
+function viewLiveTicketInThinker() {
+  if (!_ltDbId) return;
+  switchTab('thinker', document.querySelector('.page-tab.thinker-tab-btn'));
+  openThinkModal(_ltDbId);
+}
+
+async function approveLiveDecision() {
+  if (!_ltDbId) return;
+  await fetch(`/api/decisions/${_ltDbId}/approve`, {method:'POST'});
+  document.getElementById('ltApproveBtn').textContent = '✓ Approved';
+  document.getElementById('ltApproveBtn').disabled = true;
+}
+</script>
+</body>
+</html>

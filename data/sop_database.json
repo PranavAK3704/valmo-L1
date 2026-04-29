@@ -1,0 +1,143 @@
+{
+  "Losses & Debits": [
+    {
+      "keywords": [
+        "shortage",
+        "loss",
+        "debit",
+        "attribution",
+        "rto"
+      ],
+      "scenario": "Shortage Loss (Shipment Shortage)",
+      "process": "1. L1 agent checks if AWB Numbers have been rightly added by the Captain.\na. If not, L1 agent requests Captains for the right inputs.\n\n\n2. L1 agent refers to this Metabase query to check the lost attribution against the AWB. The “Remarks” column in the query tells agents on whether lost attribution is pending or not. \n\n\n3. For cross-validation, L1 agent will refer to the Shortage SOP. Additionally, L1 agent will also refer to this metabase query (Single AWB tracking, Bulk AWB tracking) to check ",
+      "escalateTo": "L2 if evidence mismatch or remarks blank",
+      "inputs": "1. Hub Code\n\n2. AWB Number (s)\n\n\n\n[A new feature requirement has been shared with Kapture, where captains will be able to download a template, add all relevant AWBs, and upload the completed template.]"
+    },
+    {
+      "keywords": [
+        "shortage",
+        "loss",
+        "debit",
+        "attribution",
+        "rto"
+      ],
+      "scenario": "nan",
+      "process": "L1 agent checks if AWB Numbers have been rightly added by the Captain. If not, L1 agent requests Captains for the right inputs.\n\n\nL1 agent refers to this Metabase query to check the lost attribution against the AWB. The remarks column in the query tells agents on whether lost attribution is pending or not. \n\n\nFor cross-validation, L1 agent will refer to the Hardstop SOP. Additionally, L1 agent will also refer to these 2 metabase queries (Single AWB tracking, Bulk AWB tracking) to check the detai",
+      "escalateTo": "L2 if evidence mismatch or remarks blank",
+      "inputs": "Hub Code\n\nAWB Number (s)"
+    },
+    {
+      "keywords": [
+        "shortage",
+        "loss",
+        "debit",
+        "attribution",
+        "rto"
+      ],
+      "scenario": "nan",
+      "process": "L1 agent checks if AWB Numbers have been rightly added by the Captain. If not, L1 agent requests Captains for the right inputs.\n\n\nL1 agent refers to this Metabase query to check the lost attribution against the AWB. The remarks column in the query tells agents on whether lost attribution is pending or not. \n\n\nFor cross-validation, L1 agent will refer to the Shortage SOP. Additionally, L1 agent will also refer to these 2 metabase queries (Single AWB tracking, Bulk AWB tracking) to check the detai",
+      "escalateTo": "L2 if evidence mismatch or remarks blank",
+      "inputs": "Hub Code\n\nAWB Number (s)* [A new feature requirement has been shared with Kapture, where captains will be able to download a template, add all relevant AWBs, and upload the completed template.]\n\nDate when evidence was shared"
+    }
+  ],
+  "Payments": [
+    {
+      "keywords": [
+        "payment",
+        "invoice",
+        "pending",
+        "esign"
+      ],
+      "scenario": "4.3.1. I have not received payment",
+      "process": "L1 agent checks if mandatory fields (Payment Cycle / Enbolt ID / Invoice Number) have been rightly added by the Captain. If not, L1 agent requests Captains for the right inputs.\n\n\nFor Step 2, \n\nFor the short term, L1 agents will be provided access to the payment tracker.\n\nL1 agents will refer to the tab corresponding to the payment cycle mentioned by the Captain.\n\nOnce in the tab, L1 agent will search by the hub-code / invoice number / Enbolt ID\n\nOnce the hub code is identified, L1 agents will r",
+      "escalateTo": "L1 handles directly",
+      "inputs": "Payment Cycle*\n\nEnbolt ID*\n\nOR\nInvoice Number"
+    },
+    {
+      "keywords": [
+        "payment",
+        "invoice",
+        "pending",
+        "esign"
+      ],
+      "scenario": "4.3.2. I have not received invoice for e-signing",
+      "process": "L1 agent checks if mandatory fields (Payment Cycle / Enbolt ID / Invoice Number) have been rightly added by the Captain. If not, L1 agent requests Captains for the right inputs.\n\n\nFor Step 2, \n\nFor the short term, L1 agents will be provided access to the payment tracker.\n\nL1 agents will refer to the tab corresponding to the payment cycle mentioned by the Captain.\n\nOnce in the tab, L1 agent will search by the hub-code / invoice number / Enbolt ID\n\nOnce the hub code is identified, L1 agents will r",
+      "escalateTo": "L1 handles directly",
+      "inputs": "Payment Cycle*\n\nEnbolt ID*\n\nOR\nInvoice Number\nOR\nHub Code"
+    },
+    {
+      "keywords": [
+        "payment",
+        "invoice",
+        "pending",
+        "esign"
+      ],
+      "scenario": "4.3.3. There is shipment count mismatch in my invoice",
+      "process": "L1 agent checks if mandatory fields (Payment Cycle / Enbolt ID / Invoice Number) have been rightly added by the Captain. If not, L1 agent requests Captains for the right inputs.\n\n\nThe L1 agent will refer to the following query to identify the delta between the shipment count considered in the invoice and the actual shipments delivered or picked up by the captain for the relevant payment cycle.\n\n\nInputs\nHub Code*\n\nPayment Cycle*\n\nEnbolt ID\n\nInvoice Number\n\nOutput\n#FWD Shipments delivered (as per ",
+      "escalateTo": "L1 handles directly",
+      "inputs": "Hub Code*\n\nEnbolt ID\n\nInvoice Number*\n\nPayment Cycle*"
+    },
+    {
+      "keywords": [
+        "payment",
+        "invoice",
+        "pending",
+        "esign"
+      ],
+      "scenario": "4.3.4. Wrong debits are marked in my invoice",
+      "process": "L1 agent checks if mandatory fields (Payment Cycle / Enbolt ID / CN Number) have been rightly added by the Captain. If not, L1 agent requests Captains for the right inputs.\n\n\nFor Step 2, \n\nFor the short term, L1 agents will be provided access to the payment tracker.\n\nL1 agents will refer to the tab “Lost Tracker”\n\nOnce in the tab, L1 agent will refer to the payment cycle. This will open up another sheet.\n\nIn the new sheet, L1 agent will refer to the tab “Captain Lost <Payment Cycle>”\n\nIn this sh",
+      "escalateTo": "L1 handles directly",
+      "inputs": "Hub Code*\n\nPayment Cycle*\n\nCredit Note Number*\n\nOR\nEnbolt ID*\n\nOR\nAWBs\n\nAttachment of the credit note"
+    },
+    {
+      "keywords": [
+        "payment",
+        "invoice",
+        "pending",
+        "esign"
+      ],
+      "scenario": "4.3.5. Wrong debits are marked in my invoice",
+      "process": "L1 agent checks if mandatory fields (Payment Cycle / Enbolt ID / CN Number) have been rightly added by the Captain. If not, L1 agent requests Captains for the right inputs.\n\n\nFor Step 2, \n\nFor the short term, L1 agents will be provided access to the payment tracker.\n\nL1 agents will refer to the tab “Lost Tracker”\n\nOnce in the tab, L1 agent will refer to the payment cycle. This will open up another sheet.\n\nIn the new sheet, L1 agent will refer to the tab “Captain Lost <Payment Cycle>”\n\nIn this sh",
+      "escalateTo": "L1 handles directly",
+      "inputs": "Hub Code*\n\nPayment Cycle*\n\nCredit Note Number*\n\nOR\nEnbolt ID*\n\nOR\nAWBs\n\nAttachment of the credit note"
+    }
+  ],
+  "Orders & Load": [
+    {
+      "keywords": [
+        "load",
+        "volume",
+        "manifestation",
+        "promised"
+      ],
+      "scenario": "4.2.1. My hub has good performance but is receiving low load from previous weeks",
+      "process": "L1 agent checks for inputs added in the ticket, the key input here being the description and timeline since when the captain is facing reduced load.\n\n\nThe L1 agent to review the trend of manifestation from the start date mentioned (either weekly or monthly) using the query mentioned here.\n\n\nQuery 1: Output to give manifestation trend of the hub\n\nInputs\nHub Code*\n\nStart Date*\n\nEnd Date\n\nData View (Daily, Weekly, Monthly)\n\n\nOutput\nAll pincodes that the DC serves\n\nDemand across the date view\n\nManif",
+      "escalateTo": "L2 if remarks blank",
+      "inputs": "Hub Code\n\nCurrent Landing Volume\n\nSince when have you been experiencing a drop in load volume? (Please specify dropdown: 1 week, 2 weeks, 3 weeks, 1 month, 2 months, or 3 months.)\n\nDescription"
+    },
+    {
+      "keywords": [
+        "load",
+        "volume",
+        "manifestation",
+        "promised"
+      ],
+      "scenario": "4.2.2. My current load is lower than the promised load.",
+      "process": "L1 agent checks for inputs added in the ticket, the key input here being the description and timeline since when the captain is facing reduced load.\n\n\nThe L1 agent should review the average weekly or monthly load at the time of DC onboarding using the first query. The agent should then analyze the trend in recent manifestations (weekly/monthly).\n\n\nQuery 1: Output to give manifestation trend of the hub\n\nInputs\nHub Code*\n\nStart Date*\n\nEnd Date\n\nData View (Daily, Weekly, Monthly)\n\nOutput\nAll pincod",
+      "escalateTo": "L2 if remarks blank",
+      "inputs": "Hub Code\n\nCurrent Manifested Volume\n\nWhat was the promised load?*\n\nSince when have you been experiencing a drop in load volume? (Please specify: 1 week, 2 weeks, 3 weeks, 1 month, 2 months, or 3 months.)\n\nDescription"
+    },
+    {
+      "keywords": [
+        "load",
+        "volume",
+        "manifestation",
+        "promised"
+      ],
+      "scenario": "4.2.3. My hub has high load fluctuation",
+      "process": "L1 agent checks for inputs added in the ticket, the key input here being the description and timeline since when the captain is facing fluctuating load.\n\n\nThe L1 agent should review the trend of manifestation from the start date mentioned (either weekly or monthly) using the query mentioned here.\n\n\nQuery 1: Output to give manifestation trend of the hub\n\nInputs\nHub Code*\n\nStart Date*\n\nEnd Date\n\nData View (Daily, Weekly, Monthly)\n\n\nOutput\nAll pincodes that the DC serves\n\nDemand across the date vie",
+      "escalateTo": "L2 if remarks blank",
+      "inputs": "Hub Code*\n\nCurrent Manifested Volume\n\nSince when have you been experiencing a drop in load volume? (Please specify: 1 week, 2 weeks, 3 weeks, 1 month, 2 months, or 3 months.)\n\nIs fluctuation occurring at a daily level or weekly level?\n\nDescription"
+    }
+  ]
+}

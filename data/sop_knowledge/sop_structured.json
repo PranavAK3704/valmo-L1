@@ -1,0 +1,1478 @@
+[
+  {
+    "problem_theme": "hardstop_loss",
+    "type": "hardstop_loss",
+    "queue": "W- LD",
+    "tat_hours": 72,
+    "intent": "captain_contests_hardstop_loss_marking",
+    "trigger_keywords": [
+      "hardstop",
+      "loss marked",
+      "wrong loss",
+      "reversal",
+      "5 days",
+      "not connected"
+    ],
+    "required_inputs": [
+      "awb_numbers"
+    ],
+    "validation_rules": [
+      {
+        "field": "awb_numbers",
+        "condition": "not_empty",
+        "action_if_failed": "request_input_from_captain",
+        "template": "missing_awb_template"
+      }
+    ],
+    "preprocessing": {
+      "note": "If scan shows node with naming PCXX = Packaging Center, AWB is consolidated into a parent. Do NOT process child AWB — find parent AWB via Single AWB Tracking query and process that instead.",
+      "parent_awb_lookup": "single_awb_tracking_query",
+      "bag_id_to_awb": "If ticket has Bag IDs (format: UN followed by digits, e.g. UN117197848) but no AWB numbers — enter the Bag ID in the Valmo 2k24 lost Metabase query to extract the individual AWB numbers. Do NOT ask captain for AWBs if Bag IDs are present."
+    },
+    "data_sources": {
+      "metabase_queries": [
+        "loss_attribution_check",
+        "lm_fe_loss_marked",
+        "seller_dependency_attempts"
+      ],
+      "log10": "single_awb_scan_history"
+    },
+    "hardstop_rule": {
+      "forward_shipment_max_days": 7,
+      "reverse_shipment_max_days": 5,
+      "description": "Any shipment arriving at hub must be connected forward within 5 days (reverse) or 7 days (forward). Breach = loss stands."
+    },
+    "scenarios": [
+      {
+        "scenario_id": "HS_1_1",
+        "label": "Scans valid + Hardstop SOP followed → reversal",
+        "conditions": [
+          "log10_scans == valid_connection",
+          "hardstop_sop_followed == true"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "Valid scans + SOP followed → eligible for reversal"
+        },
+        "response_to_captain": "Loss marked against your shipments will be reversed.",
+        "template": "hardstop_reversal_template"
+      },
+      {
+        "scenario_id": "HS_1_2",
+        "label": "Scans valid + Hardstop SOP NOT followed → no reversal",
+        "conditions": [
+          "log10_scans == valid_connection",
+          "hardstop_sop_followed == false"
+        ],
+        "action": "respond",
+        "decision": "close_no_reversal",
+        "response_to_captain": "Reversal not applicable — Hardstop SOP was not followed.",
+        "template": "hardstop_sop_breach_template"
+      },
+      {
+        "scenario_id": "HS_2",
+        "label": "Scans invalid (wrong destination connection) → no reversal",
+        "conditions": [
+          "log10_scans == wrong_destination_connection"
+        ],
+        "action": "respond",
+        "decision": "close_no_reversal",
+        "response_to_captain": "Reversal not applicable — wrong connection destination detected in scans.",
+        "template": "hardstop_wrong_connection_template"
+      },
+      {
+        "scenario_id": "HS_3",
+        "label": "Customer Rejection → no forward connection in RTO timeline → no reversal",
+        "conditions": [
+          "captain_reason == customer_rejection",
+          "log10_scans.forward_connection_within_rto_timeline == false"
+        ],
+        "action": "respond",
+        "decision": "close_no_reversal",
+        "response_to_captain": "Reversal not applicable — no forward connection within RTO timeline.",
+        "template": "hardstop_reversal_na_template"
+      },
+      {
+        "scenario_id": "HS_4",
+        "label": "Customer Unreachable → shipment not delivered within 7 days → no reversal",
+        "conditions": [
+          "captain_reason == customer_unreachable",
+          "log10_scans.delivered_within_7_days == false"
+        ],
+        "action": "respond",
+        "decision": "close_no_reversal",
+        "response_to_captain": "Reversal not applicable — shipment not delivered within 7 days.",
+        "template": "hardstop_reversal_na_template"
+      },
+      {
+        "scenario_id": "HS_5",
+        "label": "Customer denies OTP → <3 attempts or not delivered in 7 days → no reversal",
+        "conditions": [
+          "captain_reason == customer_denies_otp",
+          "log10_scans.delivery_attempts_within_7_days < 3",
+          "log10_scans.delivered_within_7_days == false"
+        ],
+        "action": "respond",
+        "decision": "close_no_reversal",
+        "response_to_captain": "Reversal not applicable — fewer than 3 delivery attempts within 7 days.",
+        "template": "hardstop_reversal_na_template"
+      },
+      {
+        "scenario_id": "HS_6",
+        "label": "Customer wants shipment post 7 days → <3 attempts or not delivered → no reversal",
+        "conditions": [
+          "captain_reason == customer_wants_post_7_days",
+          "log10_scans.delivery_attempts_within_7_days < 3",
+          "log10_scans.delivered_within_7_days == false"
+        ],
+        "action": "respond",
+        "decision": "close_no_reversal",
+        "additional_instruction": "Inform captain that customer should cancel and reorder.",
+        "response_to_captain": "Loss not applicable for reversal. Delivery must be attempted 3 times per SOP. Please advise customer to cancel and reorder.",
+        "template": "hardstop_reversal_na_template"
+      },
+      {
+        "scenario_id": "HS_7",
+        "label": "Shipment delivered but couldn't be marked → direct to tech team",
+        "conditions": [
+          "captain_reason == delivered_but_could_not_mark"
+        ],
+        "action": "respond",
+        "decision": "direct_to_tech",
+        "response_to_captain": "Please raise this issue directly with the tech team along with relevant proof of delivery.",
+        "template": "hardstop_tech_team_template"
+      },
+      {
+        "scenario_id": "HS_8_1",
+        "label": "Not inscanned to hub + FE amount RECOVERED → reversal",
+        "conditions": [
+          "captain_reason == shipment_not_inscanned_to_hub",
+          "metabase.lm_fe_loss_marked.amount_recovered_from_fe == true"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "Amount recovered from FE → eligible for reversal"
+        },
+        "response_to_captain": "Loss marked against your shipments will be reversed.",
+        "template": "hardstop_reversal_template"
+      },
+      {
+        "scenario_id": "HS_8_2",
+        "label": "Not inscanned to hub + FE amount NOT recovered + Consignment_Lost status → reversal",
+        "conditions": [
+          "captain_reason == shipment_not_inscanned_to_hub",
+          "metabase.lm_fe_loss_marked.amount_recovered_from_fe == false",
+          "log10_scans.last_status == Consignment_Lost"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "Amount not recovered + Consignment_Lost confirmed → eligible for reversal"
+        },
+        "response_to_captain": "Loss marked against your shipments will be reversed.",
+        "template": "hardstop_reversal_template"
+      },
+      {
+        "scenario_id": "HS_9_1",
+        "label": "Awaited instruction (seller dependency) + SOP BREACHED → no reversal",
+        "conditions": [
+          "captain_reason == awaited_instruction_seller_dependency",
+          "metabase.seller_dependency_attempts.sop_followed == false"
+        ],
+        "action": "respond",
+        "decision": "close_no_reversal",
+        "response_to_captain": "No reversal — Seller Dependency SOP was not followed.",
+        "template": "hardstop_sop_breach_template"
+      },
+      {
+        "scenario_id": "HS_9_2",
+        "label": "Awaited instruction (seller dependency) + SOP FOLLOWED → reversal",
+        "conditions": [
+          "captain_reason == awaited_instruction_seller_dependency",
+          "metabase.seller_dependency_attempts.sop_followed == true"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "Seller Dependency SOP followed → eligible for reversal"
+        },
+        "response_to_captain": "Loss marked against your shipments will be reversed.",
+        "template": "hardstop_reversal_template"
+      },
+      {
+        "scenario_id": "HS_10",
+        "label": "Wrong shipment/bag received (misrouted, deadline missed) → no reversal",
+        "conditions": [
+          "captain_reason == wrong_shipment_or_bag_received",
+          "log10_scans.misroute_within_2_days == false"
+        ],
+        "action": "respond",
+        "decision": "close_no_reversal",
+        "note": "For bags: use Bag ID tracking query. If unavailable, enter all AWBs in bag individually.",
+        "response_to_captain": "No reversal applicable — shipments not routed to correct hub within 2-day misroute deadline.",
+        "template": "hardstop_reversal_na_template"
+      },
+      {
+        "scenario_id": "HS_11_1",
+        "label": "Correctly misrouted (MISROUTE scan within 2 days) → reversal",
+        "conditions": [
+          "captain_reason == misrouted_shipment",
+          "log10_scans.misroute_scan_within_2_days == true"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "MISROUTE scan within 2-day window — valid misroute → eligible for reversal"
+        },
+        "response_to_captain": "Loss will be reversed — misroute was detected within the valid window."
+      },
+      {
+        "scenario_id": "HS_11_2",
+        "label": "Incorrectly misrouted (back-and-forth beyond limit) → no reversal",
+        "conditions": [
+          "captain_reason == misrouted_shipment",
+          "log10_scans.back_and_forth_misroute_count > 2"
+        ],
+        "action": "respond",
+        "decision": "close_no_reversal",
+        "note": "Shipments bouncing between 2 hubs — maximum 2 misroutes allowed. Loss attributed to original hub.",
+        "response_to_captain": "No reversal applicable — shipments exceeded maximum misroute allowance.",
+        "template": "hardstop_reversal_na_template"
+      },
+      {
+        "scenario_id": "HS_WAIVER",
+        "label": "Hardstop Loss Waiver — captain meets all waiver eligibility conditions",
+        "conditions": [
+          "captain_tenure_days < 60",
+          "prior_hardstop_reversals == 0",
+          "invoice_cycles_generated >= 1",
+          "current_hardstop_pendency == 0"
+        ],
+        "note": "ALL four conditions must be met simultaneously. If any fails, waiver not applicable — treat as standard hardstop scenario.",
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "Captain meets all waiver eligibility — tenure <60 days, no prior reversals, invoice generated, zero current pendency"
+        },
+        "response_to_captain": "Your case meets the eligibility criteria for a hardstop waiver. We are escalating this for review."
+      }
+    ]
+  },
+  {
+    "problem_theme": "shortage_loss",
+    "type": "shortage_loss",
+    "queue": "shipment_shortage",
+    "queue_aliases": [
+      "W- LD",
+      "losses & debits"
+    ],
+    "tat_hours": 72,
+    "intent": "captain_contests_shortage_loss_attribution",
+    "trigger_keywords": [
+      "shortage",
+      "short",
+      "missing shipment",
+      "bag shortage",
+      "evidence",
+      "CCTV"
+    ],
+    "required_inputs": [
+      "awb_numbers"
+    ],
+    "validation_rules": [
+      {
+        "field": "awb_numbers",
+        "condition": "not_empty",
+        "action_if_failed": "request_input_from_captain",
+        "template": "missing_awb_template"
+      }
+    ],
+    "data_sources": {
+      "metabase_queries": [
+        "loss_attribution_check",
+        "shortage_data_query"
+      ],
+      "log10": "single_awb_scan_history"
+    },
+    "derived_conditions": {
+      "mails_sent_to_both_partners": "shortage_data_query.marked_location_mail_status == sent AND shortage_data_query.assigned_location_mail_status == sent",
+      "ticket_within_24hrs": "ticket_created_time - vehicle_arrival_timestamp <= 24h",
+      "marked_location_sla_breached": "shortage_data_query.marked_location_ticket_status == SLA_BREACHED",
+      "assigned_location_sla_breached": "shortage_data_query.assigned_location_ticket_status == SLA_BREACHED"
+    },
+    "scenarios": [
+      {
+        "scenario_id": "SL_1",
+        "label": "Evidence/reply mails not sent to one or all partners → re-queue mails",
+        "conditions": [
+          "mails_sent_to_both_partners == false"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L3",
+          "system": "kapture",
+          "type": "direct",
+          "reason": "Mails not triggered to all required partners — L3 to re-queue"
+        },
+        "response_to_captain": "We have identified that evidence emails were not sent to all required partners. Re-escalating to ensure correct communication."
+      },
+      {
+        "scenario_id": "SL_2",
+        "label": "Captain unable to mark shortage → check SOP compliance",
+        "conditions": [
+          "captain_issue == unable_to_mark_shortage"
+        ],
+        "decision_tree": [
+          {
+            "if": "ticket_within_24hrs == true AND shortage_data_query.status == CLOSED",
+            "then": "mark_as_tech_issue",
+            "action": "respond",
+            "template": "tech_issue_template"
+          },
+          {
+            "if": "ticket_within_24hrs == false",
+            "then": "sop_breach_reject",
+            "action": "respond",
+            "template": "shortage_sop_breach_template"
+          }
+        ]
+      },
+      {
+        "scenario_id": "SL_3",
+        "label": "One partner shared evidence, other has not → loss attributed to non-compliant partner",
+        "conditions": [
+          "marked_location_sla_breached == true OR assigned_location_sla_breached == true"
+        ],
+        "action": "respond",
+        "decision": "attribute_loss_to_non_compliant_partner",
+        "note": "SLA_BREACHED status = partner did not share evidence in time. CLOSED ≠ SLA_BREACHED — do not confuse.",
+        "response_to_captain": "Loss has been attributed to the partner that did not share evidence within the required timeframe per shortage SOP."
+      },
+      {
+        "scenario_id": "SL_4",
+        "label": "Both partners shared evidence but loss marked on one → escalate for evidence validation",
+        "conditions": [
+          "marked_location_sla_breached == false",
+          "assigned_location_sla_breached == false",
+          "captain_contesting_attribution == true"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "Both partners submitted evidence — requires trained team to validate and determine correct attribution"
+        },
+        "response_to_captain": "Both partners have submitted evidence. Escalating to the evidence validation team for review."
+      },
+      {
+        "scenario_id": "SL_5",
+        "label": "Captain claims wrong email ID was shared",
+        "conditions": [
+          "captain_issue == wrong_email_id_shared"
+        ],
+        "action": "respond",
+        "decision": "inform_should_have_raised_earlier",
+        "response_to_captain": "You should have intimated this previously. Following the required process.",
+        "template": "shortage_wrong_email_template"
+      }
+    ],
+    "preprocessing": {
+      "bag_id_to_awb": "If ticket has Bag IDs (format: UN + digits) but no AWB numbers — use the Valmo 2k24 lost Metabase query with the Bag ID to get individual AWBs. Do NOT use needs_info to ask for AWBs when Bag IDs are present."
+    }
+  },
+  {
+    "problem_theme": "consumables_order",
+    "type": "consumables",
+    "queue": "C_V",
+    "tat_hours": 24,
+    "intent": "captain_query_about_consumables_order",
+    "trigger_keywords": [
+      "consumables",
+      "flyer",
+      "polybag",
+      "docket",
+      "order",
+      "packaging material",
+      "RVP"
+    ],
+    "required_inputs": [
+      "order_id",
+      "hub_id"
+    ],
+    "validation_rules": [
+      {
+        "field": "order_id",
+        "condition": "not_empty",
+        "action_if_failed": "request_input_from_captain",
+        "template": "missing_order_hub_id_template"
+      },
+      {
+        "field": "hub_id",
+        "condition": "not_empty",
+        "action_if_failed": "request_input_from_captain",
+        "template": "missing_order_hub_id_template"
+      }
+    ],
+    "data_sources": {
+      "sheets": [
+        "rvp_consumables_partner_details"
+      ],
+      "columns_to_check": [
+        "supplier_code",
+        "dispatch_date",
+        "delivery_date",
+        "order_status",
+        "docket_no",
+        "courier_name",
+        "order_details",
+        "qty"
+      ]
+    },
+    "scenarios": [
+      {
+        "scenario_id": "CON_1",
+        "label": "Captain wants to know how to place an order",
+        "conditions": [
+          "captain_issue == how_to_place_order"
+        ],
+        "action": "respond",
+        "response_to_captain": "Guide captain on how to place consumables order.",
+        "template": "consumables_order_process_template"
+      },
+      {
+        "scenario_id": "CON_2",
+        "label": "Captain unable to order — not whitelisted",
+        "conditions": [
+          "captain_issue == not_whitelisted"
+        ],
+        "required_inputs_for_scenario": [
+          "hub_id",
+          "order_id"
+        ],
+        "action": "respond",
+        "steps": [
+          "Verify all required details present in ticket",
+          "If missing: request using template",
+          "If present: upload details to whitelisting sheet",
+          "Reply to captain confirming completion"
+        ],
+        "template": "consumables_whitelisting_complete_template"
+      },
+      {
+        "scenario_id": "CON_3",
+        "label": "Captain wants to track order / hasn't received on time",
+        "conditions": [
+          "captain_issue == track_order OR captain_issue == order_delayed"
+        ],
+        "action": "respond",
+        "decision_tree": [
+          {
+            "if": "rvp_sheet.order_status == Delivered",
+            "then": "loop_in_supplier_via_email",
+            "note": "Email linked to supplier_code in supplier sheet"
+          },
+          {
+            "if": "rvp_sheet.order_status == Dispatched",
+            "then": "provide_tracking_info",
+            "steps": [
+              "Go to courier named in courier_name column",
+              "Enter docket_no as tracking ID",
+              "Reply to captain with tracking status and instructions to self-track"
+            ],
+            "template": "consumables_track_order_template"
+          }
+        ]
+      },
+      {
+        "scenario_id": "CON_4",
+        "label": "Captain received fewer consumables than ordered",
+        "conditions": [
+          "captain_issue == received_less_than_ordered"
+        ],
+        "action": "respond",
+        "decision_tree": [
+          {
+            "if": "quantity_matches == true AND rvp_sheet.order_status == Delivered",
+            "then": "loop_in_supplier",
+            "template": "consumables_shortage_delivered_template"
+          },
+          {
+            "if": "quantity_matches == true AND rvp_sheet.order_status == Dispatched",
+            "then": "reply_dispatched",
+            "template": "consumables_shortage_dispatched_template"
+          },
+          {
+            "if": "quantity_matches == false",
+            "then": "loop_in_supplier_immediately"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "problem_theme": "consumables_quality",
+    "type": "consumables",
+    "queue": "C_V",
+    "tat_hours": 24,
+    "intent": "captain_reports_consumables_quality_issue",
+    "trigger_keywords": [
+      "damaged",
+      "broken",
+      "defective",
+      "QC",
+      "quality",
+      "secondary QC"
+    ],
+    "required_inputs": [
+      "order_id",
+      "hub_id",
+      "proof_of_damage"
+    ],
+    "validation_rules": [
+      {
+        "field": "required_info_present",
+        "condition": "all_fields_valid",
+        "action_if_failed": "request_input_from_captain",
+        "template": "consumables_missing_info_template"
+      }
+    ],
+    "data_sources": {
+      "sheets": [
+        "rvp_consumables_partner_details"
+      ],
+      "supplier_email_lookup": "supplier_code_to_email_map"
+    },
+    "scenarios": [
+      {
+        "scenario_id": "CON_QC_1",
+        "label": "Damaged consumables received",
+        "conditions": [
+          "captain_issue == damaged_consumables_received"
+        ],
+        "action": "respond",
+        "steps": [
+          "Validate required info is present and valid",
+          "If not: request using template",
+          "Loop in supplier via email linked to supplier_code",
+          "Reply to captain acknowledging and confirming supplier looped in"
+        ],
+        "template": "consumables_damaged_template"
+      },
+      {
+        "scenario_id": "CON_QC_2",
+        "label": "Secondary QC failure",
+        "conditions": [
+          "captain_issue == secondary_qc_failure"
+        ],
+        "action": "respond",
+        "steps": [
+          "Validate required info is present and valid",
+          "If not: request using template",
+          "Follow QC failure resolution process"
+        ],
+        "template": "consumables_qc_failure_template"
+      }
+    ]
+  },
+  {
+    "problem_theme": "payment_not_received",
+    "type": "payments",
+    "queue": "M_V",
+    "tat_hours": 12,
+    "intent": "captain_has_not_received_payment",
+    "trigger_keywords": [
+      "payment",
+      "not received",
+      "invoice",
+      "payout",
+      "pendency"
+    ],
+    "required_inputs": [
+      "payment_cycle",
+      "enbolt_id",
+      "invoice_number"
+    ],
+    "validation_rules": [
+      {
+        "field": "payment_cycle",
+        "condition": "not_empty",
+        "action_if_failed": "request_input_from_captain"
+      },
+      {
+        "field": "enbolt_id",
+        "condition": "not_empty",
+        "action_if_failed": "request_input_from_captain"
+      }
+    ],
+    "data_sources": {
+      "metabase_queries": [
+        "captain_payment_status_and_amount"
+      ],
+      "filter_by": [
+        "hub_code",
+        "invoice_number",
+        "enbolt_id"
+      ],
+      "key_column": "Remarks"
+    },
+    "scenarios": [
+      {
+        "scenario_id": "PAY_1",
+        "label": "Payment processed — based on Remarks column status",
+        "conditions": [
+          "metabase.captain_payment.remarks != null"
+        ],
+        "action": "respond",
+        "decision_tree": [
+          {
+            "if": "remarks == Payment_processed",
+            "then": "respond",
+            "template": "payment_processed_template"
+          },
+          {
+            "if": "remarks == Pending_E_Sign",
+            "then": "respond",
+            "template": "pending_esign_template"
+          },
+          {
+            "if": "remarks == Hold_Negative",
+            "then": "respond",
+            "template": "hold_negative_template"
+          },
+          {
+            "if": "remarks == GST_Defaulter_Hold",
+            "then": "respond",
+            "template": "gst_defaulter_template"
+          },
+          {
+            "if": "remarks == Risk_COD_pendency",
+            "then": "respond",
+            "template": "risk_cod_pendency_template"
+          },
+          {
+            "if": "remarks == Risk_COD_Shipment_pendency",
+            "then": "respond",
+            "template": "risk_cod_shipment_template"
+          },
+          {
+            "if": "remarks == Risk_Open_losses",
+            "then": "respond",
+            "template": "risk_open_losses_template"
+          },
+          {
+            "if": "remarks == Risk_COD_Shipment_Open_losses",
+            "then": "respond",
+            "template": "risk_combined_template"
+          },
+          {
+            "if": "remarks == Grocery_Defaulter",
+            "then": "respond",
+            "template": "grocery_defaulter_template"
+          },
+          {
+            "if": "remarks == GST_above_20L",
+            "then": "respond",
+            "template": "gst_above_20l_template"
+          },
+          {
+            "if": "remarks == DC_under_FnF",
+            "then": "respond",
+            "template": "dc_fnf_template"
+          },
+          {
+            "if": "remarks == Payout_Hold_by_ops",
+            "then": "respond",
+            "template": "hold_by_ops_template"
+          },
+          {
+            "if": "remarks == Payment_Failed",
+            "then": "respond",
+            "template": "payment_failed_template"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "problem_theme": "full_and_final_settlement",
+    "type": "payments",
+    "queue": "M_V",
+    "tat_hours": null,
+    "intent": "captain_requests_fnf_settlement",
+    "trigger_keywords": [
+      "FnF",
+      "full and final",
+      "settlement",
+      "final settlement",
+      "SD refund"
+    ],
+    "required_inputs": [
+      "hub_code",
+      "enbolt_id"
+    ],
+    "validation_rules": [
+      {
+        "field": "hub_code",
+        "condition": "not_empty",
+        "action_if_failed": "request_input_from_captain"
+      }
+    ],
+    "data_sources": {
+      "sheets": [
+        "fnf_dashboard",
+        "fnf_refund_tracker",
+        "sd_refund_request_sheet"
+      ],
+      "input_fields": [
+        "hub_code"
+      ],
+      "output_fields": [
+        "ap_remarks",
+        "cost_ops_sub_header",
+        "cost_ops_final_remarks",
+        "payment_process_date"
+      ]
+    },
+    "scenarios": [
+      {
+        "scenario_id": "FNF_1",
+        "label": "FnF status from AP Remarks — L1 responds directly",
+        "decision_tree": [
+          {
+            "if": "ap_remarks == FnF_done",
+            "then": "respond",
+            "template": "fnf_done_template",
+            "note": "FnF cases picked every 15 days"
+          },
+          {
+            "if": "ap_remarks == GST_issue",
+            "then": "respond",
+            "template": "gst_issue_template"
+          },
+          {
+            "if": "ap_remarks == Signature_Pending",
+            "then": "respond",
+            "template": "signature_pending_template"
+          },
+          {
+            "if": "ap_remarks == Open_Pendency",
+            "then": "respond",
+            "template": "open_pendency_template"
+          },
+          {
+            "if": "ap_remarks IN [Deposit_Consideration_Issue, SD_details_not_available, Hold_by_ops]",
+            "then": "escalate",
+            "escalation": {
+              "level": "L2"
+            }
+          }
+        ]
+      },
+      {
+        "scenario_id": "FNF_2",
+        "label": "SD Refund — from SD refund request sheet Cost Ops remarks",
+        "data_source": "sd_refund_request_sheet",
+        "decision_tree": [
+          {
+            "if": "cost_ops_remarks == SD_Refund_Done",
+            "then": "respond",
+            "template": "sd_refund_done_template"
+          },
+          {
+            "if": "cost_ops_remarks == Pending_from_cost_ops",
+            "then": "respond",
+            "template": "sd_pending_cost_ops_template"
+          },
+          {
+            "if": "cost_ops_remarks == Pending_from_ops_Partner_dependency",
+            "then": "escalate",
+            "escalation": {
+              "level": "L2"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "problem_theme": "invoice_download",
+    "type": "payments",
+    "queue": "M_V",
+    "tat_hours": null,
+    "intent": "captain_wants_invoice_download",
+    "trigger_keywords": [
+      "invoice",
+      "download",
+      "previous cycle",
+      "statement"
+    ],
+    "required_inputs": [],
+    "scenarios": [
+      {
+        "scenario_id": "INV_1",
+        "label": "Invoice download request → direct L2 escalation",
+        "conditions": [
+          "captain_issue == invoice_download_request"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "Invoice downloads handled by L2 directly"
+        }
+      }
+    ]
+  },
+  {
+    "problem_theme": "shipment_count_mismatch",
+    "type": "payments",
+    "queue": "M_V",
+    "tat_hours": 24,
+    "intent": "captain_disputes_shipment_count_in_invoice",
+    "trigger_keywords": [
+      "shipment count",
+      "count mismatch",
+      "invoice mismatch",
+      "wrong count",
+      "FWD",
+      "RVP count"
+    ],
+    "required_inputs": [
+      "payment_cycle",
+      "enbolt_id",
+      "invoice_number"
+    ],
+    "validation_rules": [
+      {
+        "field": "payment_cycle",
+        "condition": "not_empty",
+        "action_if_failed": "request_input_from_captain"
+      }
+    ],
+    "data_sources": {
+      "metabase_queries": [
+        "captain_payment_status_and_amount"
+      ],
+      "outputs": [
+        "fwd_shipments_delivered_invoice",
+        "rvp_shipments_picked_invoice",
+        "actual_fwd_shipments_delivered",
+        "actual_rvp_shipments_picked",
+        "delta_fwd",
+        "delta_rvp"
+      ]
+    },
+    "scenarios": [
+      {
+        "scenario_id": "SCM_1",
+        "label": "Respond with delta analysis — keep open for 72h for captain to contest",
+        "conditions": [
+          "captain_issue == shipment_count_mismatch"
+        ],
+        "action": "respond",
+        "steps": [
+          "Run captain_payment_status_and_amount query",
+          "Calculate delta_fwd = actual_fwd - invoice_fwd",
+          "Calculate delta_rvp = actual_rvp - invoice_rvp",
+          "Reply with delta breakdown per template",
+          "Set ticket status to awaiting_user_response",
+          "Auto-close if no response in 72 hours"
+        ],
+        "template": "shipment_count_delta_template"
+      }
+    ]
+  },
+  {
+    "problem_theme": "wrong_debits",
+    "type": "payments",
+    "queue": "M_V",
+    "tat_hours": 72,
+    "intent": "captain_disputes_wrong_debits_in_invoice",
+    "trigger_keywords": [
+      "wrong debit",
+      "debit marked",
+      "incorrect debit",
+      "reversal debit"
+    ],
+    "required_inputs": [],
+    "scenarios": [
+      {
+        "scenario_id": "WD_1",
+        "label": "Wrong debits → reroute to L1 Losses & Debits queue",
+        "conditions": [
+          "captain_issue == wrong_debits_in_invoice"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L1_internal",
+          "queue": "losses_and_debits",
+          "reason": "Wrong debit queries handled by L1 Losses & Debits team"
+        }
+      }
+    ]
+  },
+  {
+    "problem_theme": "razorpay_cod_pendency",
+    "type": "payments",
+    "queue": "M_V",
+    "tat_hours": null,
+    "intent": "captain_paid_razorpay_but_cod_pendency_still_showing",
+    "trigger_keywords": [
+      "Razorpay",
+      "company QR",
+      "COD pendency",
+      "paid but showing",
+      "QR payment"
+    ],
+    "required_inputs": [],
+    "scenarios": [
+      {
+        "scenario_id": "RZP_1",
+        "label": "Razorpay payment showing in COD pendency → direct L2 escalation",
+        "conditions": [
+          "captain_issue == razorpay_payment_in_cod_pendency"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "Razorpay/COD reconciliation handled by L2"
+        }
+      }
+    ]
+  },
+  {
+    "problem_theme": "pilot_payment_not_received",
+    "type": "payments",
+    "queue": "M_V",
+    "tat_hours": null,
+    "intent": "captain_pilot_fe_has_not_received_payment",
+    "trigger_keywords": [
+      "pilot",
+      "FE payment",
+      "field executive",
+      "rider payment",
+      "driver payment"
+    ],
+    "required_inputs": [
+      "partner_id",
+      "fe_phone_number_or_hub_code",
+      "payment_cycle"
+    ],
+    "validation_rules": [
+      {
+        "field": "partner_id",
+        "condition": "not_empty",
+        "action_if_failed": "request_input_from_captain"
+      }
+    ],
+    "data_sources": {
+      "metabase_queries": [
+        "lm_pilot_payout_raw"
+      ],
+      "filter_by": [
+        "payment_cycle",
+        "partner_id"
+      ],
+      "key_column": "Remarks"
+    },
+    "scenarios": [
+      {
+        "scenario_id": "PILOT_1",
+        "label": "Respond based on LM Pilot Payout Remarks",
+        "decision_tree": [
+          {
+            "if": "remarks == SUCCEEDED",
+            "then": "respond",
+            "template": "pilot_payment_succeeded_template"
+          },
+          {
+            "if": "remarks == FAILED",
+            "then": "respond",
+            "template": "pilot_payment_failed_template"
+          },
+          {
+            "if": "remarks == Pending_scheduled_for_later",
+            "then": "respond",
+            "template": "pilot_pending_later_template"
+          },
+          {
+            "if": "remarks == Not_whitelisted",
+            "then": "respond",
+            "template": "pilot_not_whitelisted_template"
+          },
+          {
+            "if": "remarks IN [Hold_blocked, Hold_others]",
+            "then": "respond",
+            "template": "pilot_hold_template"
+          },
+          {
+            "if": "remarks IN [Bts_open_ground, Bts_open_not_received, Bts_open_others]",
+            "then": "respond",
+            "template": "pilot_bts_template"
+          },
+          {
+            "if": "remarks IN [Dpt_not_created_bts_closed_after_14_days, Dpt_not_created_bts_received_after_14_days]",
+            "then": "respond",
+            "template": "pilot_dpt_template"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "problem_theme": "cod_pendency",
+    "type": "cash_handover",
+    "queue": "M_V",
+    "tat_hours": null,
+    "intent": "captain_reports_cod_pendency_showing_in_system",
+    "trigger_keywords": [
+      "COD pendency",
+      "cash deposit",
+      "cash not credited",
+      "deposit not reflected"
+    ],
+    "required_inputs": [
+      "hub_code"
+    ],
+    "validation_rules": [
+      {
+        "field": "hub_code",
+        "condition": "not_empty",
+        "action_if_failed": "request_input_from_captain"
+      }
+    ],
+    "data_sources": {
+      "metabase_queries": [
+        "cod_pendency_check",
+        "cod_transaction_details"
+      ],
+      "filter_by": [
+        "hub_code",
+        "transaction_id"
+      ]
+    },
+    "scenarios": [
+      {
+        "scenario_id": "COD_1",
+        "label": "COD pendency = 0 → close ticket",
+        "conditions": [
+          "cod_pendency_query.current_pendency == 0"
+        ],
+        "action": "respond",
+        "response_to_captain": "The current COD pendency for your hub is reflecting as 0. Last deposit received on [date] for Rs. [amount]. Closing ticket — reopen after 48 hours if issue persists.",
+        "template": "cod_zero_pendency_template"
+      },
+      {
+        "scenario_id": "COD_2",
+        "label": "COD pendency > 0 → check transactions and respond",
+        "conditions": [
+          "cod_pendency_query.current_pendency > 0"
+        ],
+        "action": "respond",
+        "steps": [
+          "Run cod_transaction_details query with hub_code or transaction_id",
+          "Check last transaction date and amount",
+          "Reply with current pendency details and next steps"
+        ],
+        "template": "cod_pendency_details_template"
+      }
+    ]
+  },
+  {
+    "problem_theme": "cms_not_aligned",
+    "type": "cash_handover",
+    "queue": "M_V",
+    "tat_hours": null,
+    "intent": "captain_reports_cms_data_mismatch",
+    "trigger_keywords": [
+      "CMS",
+      "not aligned",
+      "system mismatch",
+      "data mismatch"
+    ],
+    "required_inputs": [],
+    "scenarios": [
+      {
+        "scenario_id": "CMS_1",
+        "label": "CMS not aligned → direct L2 escalation",
+        "conditions": [
+          "captain_issue == cms_not_aligned"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "CMS alignment issues handled by L2 directly"
+        }
+      }
+    ]
+  },
+  {
+    "problem_theme": "orders_and_planning",
+    "type": "orders_planning",
+    "queue": "orders_and_planning",
+    "queue_aliases": [
+      "M_V",
+      "orders",
+      "orders & planning"
+    ],
+    "tat_hours": 12,
+    "intent": "captain_queries_about_order_volume_route_allocation_or_rvp_load",
+    "trigger_keywords": [
+      "orders",
+      "planning",
+      "load",
+      "volume",
+      "allocation",
+      "forward leg",
+      "route",
+      "low load",
+      "pin code",
+      "polygon",
+      "RVP load",
+      "reactivate"
+    ],
+    "required_inputs": [
+      "hub_code"
+    ],
+    "validation_rules": [
+      {
+        "field": "hub_code",
+        "condition": "not_empty",
+        "action_if_failed": "request_input_from_captain"
+      }
+    ],
+    "data_sources": {
+      "metabase_queries": [
+        "orders_and_planning_view",
+        "signal_superset"
+      ],
+      "filter_by": [
+        "hub_code",
+        "user_pin"
+      ],
+      "key_column": "L1_Remarks"
+    },
+    "note": "SOPs 2.1-2.3 apply to Forward Leg. Same SOPs used for RVP (Scenarios 2.6-2.7) with different analytics section.",
+    "scenarios": [
+      {
+        "scenario_id": "OP_1",
+        "label": "Low load / load below promised / high fluctuation — RTO improvement path",
+        "conditions": [
+          "l1_remarks == Improve_RTO_performance"
+        ],
+        "action": "respond",
+        "response_to_captain": "Improve your RTO performance by X% — as demand increases in your polygon, load may increase.",
+        "template": "orders_rto_improve_template"
+      },
+      {
+        "scenario_id": "OP_2",
+        "label": "Low load / load below promised / high fluctuation — current volume is max for polygon",
+        "conditions": [
+          "l1_remarks == Max_volume_for_polygon"
+        ],
+        "action": "respond",
+        "response_to_captain": "This is the current volume being offered. As demand increases in your polygon, you may see an increase.",
+        "template": "orders_max_volume_template"
+      },
+      {
+        "scenario_id": "OP_3",
+        "label": "Orders query requires L2 per L1_Remarks",
+        "conditions": [
+          "l1_remarks == Escalate_to_L2"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "Orders & Planning query requires L2 intervention per L1_Remarks"
+        }
+      },
+      {
+        "scenario_id": "OP_4",
+        "label": "Pin code addition or subtraction request",
+        "conditions": [
+          "captain_issue == pincode_add_or_subtract"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "Pin code / polygon changes handled by L2 via Cluster Heads on Slack"
+        },
+        "response_to_captain": "Your pin code addition/subtraction request has been escalated to our team. TAT is as per polygon correction SOP."
+      },
+      {
+        "scenario_id": "OP_5",
+        "label": "Load reduced to zero without intimation",
+        "conditions": [
+          "captain_issue == load_made_zero_without_notice"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L3",
+          "contact": "Aman Agrawal",
+          "reason": "Load-to-zero without notice requires L3 to connect with AMs"
+        },
+        "response_to_captain": "We have escalated this to our L3 team to understand the reason for your load being set to zero. You will receive an update shortly."
+      },
+      {
+        "scenario_id": "OP_6",
+        "label": "RVP load zero or RVP reactivation request",
+        "conditions": [
+          "captain_issue == rvp_load_zero OR captain_issue == rvp_reactivation"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "RVP load zero / reactivation — same SOP as forward leg but different analytics"
+        },
+        "response_to_captain": "Your RVP reactivation / load query has been escalated. Our team will review and revert."
+      },
+      {
+        "scenario_id": "OP_7",
+        "label": "Captain requests increase in RVP load",
+        "conditions": [
+          "captain_issue == increase_rvp_load"
+        ],
+        "action": "escalate",
+        "escalation": {
+          "level": "L2",
+          "reason": "RVP load increase — same SOP as forward leg load increase with different analytics"
+        },
+        "response_to_captain": "Your request to increase RVP load has been escalated. Our team will review capacity and revert."
+      }
+    ]
+  },
+  {
+    "problem_theme": "rvp_consumables_payment",
+    "type": "consumables",
+    "queue": "C_V",
+    "tat_hours": null,
+    "intent": "captain_has_not_received_payment_for_rvp_consumables_ordered",
+    "trigger_keywords": [
+      "RVP payment",
+      "consumable payment",
+      "consumables invoice",
+      "not paid",
+      "payment short",
+      "count mismatch consumables",
+      "billing cycle"
+    ],
+    "required_inputs": [
+      "hub_id",
+      "order_id",
+      "billing_cycle"
+    ],
+    "validation_rules": [
+      {
+        "field": "hub_id",
+        "condition": "not_empty",
+        "action_if_failed": "request_input_from_captain"
+      },
+      {
+        "field": "order_id",
+        "condition": "not_empty",
+        "action_if_failed": "request_input_from_captain"
+      }
+    ],
+    "data_sources": {
+      "metabase_queries": [
+        "captain_payout_query"
+      ],
+      "filter_by": [
+        "hub_id"
+      ],
+      "columns_to_check": [
+        "rvp_consumable_amount",
+        "rvp_consumable_packet_count",
+        "rvp_consumable_rate"
+      ],
+      "validation_formula": "rate × count = amount"
+    },
+    "note": "High fraud risk on this queue — validate ordered vs. claimed packets before processing. Payment processed 2 weeks after order cycle. Manual entries (Scenario 3) follow same payment cycle as Scenario 2.",
+    "scenarios": [
+      {
+        "scenario_id": "CON_PAY_1",
+        "label": "Payment received for fewer consumables than ordered (X of Y, X<Y)",
+        "conditions": [
+          "rvp_consumable_packet_count < captain_claimed_count"
+        ],
+        "action": "escalate",
+        "steps": [
+          "Enter hub_id into captain_payout_query",
+          "Check rvp_consumable_amount, rvp_consumable_packet_count, rvp_consumable_rate",
+          "Validate: rate × count = amount",
+          "If count_in_query < captain_stated_count → escalate to L3 (Cost-Ops)"
+        ],
+        "escalation": {
+          "level": "L3",
+          "team": "cost_ops",
+          "reason": "Count mismatch in consumable payment — post-validation escalation"
+        },
+        "response_to_captain": "We have verified your payment data. The count discrepancy has been escalated to our Cost-Ops team for resolution."
+      },
+      {
+        "scenario_id": "CON_PAY_1b",
+        "label": "Payment received for fewer consumables — count MATCHES query",
+        "conditions": [
+          "rvp_consumable_packet_count == captain_claimed_count"
+        ],
+        "action": "respond",
+        "response_to_captain": "We have verified your consumable payment. The count in our records matches your stated count. Payment details shared.",
+        "template": "con_pay_count_match_template"
+      },
+      {
+        "scenario_id": "CON_PAY_2",
+        "label": "No payment received for any consumables ordered (full non-payment)",
+        "conditions": [
+          "rvp_consumable_packet_count == 0 OR rvp_consumable_packet_count == null"
+        ],
+        "action": "respond",
+        "steps": [
+          "Enter hub_id into captain_payout_query",
+          "Check payment cycles mentioned by partner",
+          "If count ~0 for mentioned cycles: classify as arrear",
+          "Payment processing happens 2 weeks after the cycle order was made",
+          "Reply with arrear template"
+        ],
+        "response_to_captain": "Your consumable payment appears to be pending as an arrear. Payments are processed 2 weeks after the order cycle. Please allow the cycle to complete.",
+        "template": "con_pay_arrear_template"
+      },
+      {
+        "scenario_id": "CON_PAY_3",
+        "label": "Manual entries post scan failure — payment not processed",
+        "conditions": [
+          "captain_issue == manual_entries_after_scan_failure"
+        ],
+        "note": "No method to verify manual entries independently. Payment follows Scenario 2 (CON_PAY_2) cycle — processed in the cycle following the order cycle.",
+        "action": "respond",
+        "response_to_captain": "For orders with scan failures requiring manual entry, payment is processed in the cycle following your order cycle (per April timeline). Please allow the cycle to complete.",
+        "template": "con_pay_manual_entry_template"
+      }
+    ]
+  },
+  {
+    "problem_theme": "vague_or_unclear_ticket",
+    "type": "meta_rule",
+    "queue": "any",
+    "tat_hours": null,
+    "intent": "captain_message_is_too_vague_to_classify",
+    "trigger_keywords": [
+      "suspicious",
+      "some issue",
+      "problem",
+      "not working",
+      "please help"
+    ],
+    "required_inputs": [
+      "clarification_of_intent"
+    ],
+    "validation_rules": [
+      {
+        "field": "ticket_describes_specific_issue",
+        "condition": "true",
+        "action_if_failed": "request_clarification"
+      }
+    ],
+    "vague_term_table": [
+      {
+        "term": "suspicious shipment",
+        "ask": "What exactly is suspicious — tampered packaging, customer fraud, wrong contents, or something else?"
+      },
+      {
+        "term": "some issue",
+        "ask": "Could you describe the specific issue you're facing?"
+      },
+      {
+        "term": "problem with parcel",
+        "ask": "What is the nature of the problem — loss, shortage, damage, delivery failure?"
+      },
+      {
+        "term": "not working",
+        "ask": "What is not working — the app, the tracking, the payment portal?"
+      },
+      {
+        "term": "awaited instruction",
+        "ask": "What specific instruction are you referring to, and from which team?"
+      }
+    ],
+    "scenarios": [
+      {
+        "scenario_id": "VAGUE_1",
+        "label": "Ticket too vague to classify → ask for clarification",
+        "conditions": [
+          "ticket_intent == unclear"
+        ],
+        "action": "needs_info",
+        "response_to_captain": "To assist you better, could you please describe the specific issue you're facing, including relevant AWB numbers and what action you are requesting?"
+      }
+    ]
+  },
+  {
+    "problem_theme": "tech_issue",
+    "type": "tech_issue",
+    "queue": "*",
+    "queue_aliases": [
+      "W- LD",
+      "losses & debits",
+      "Pilot Support (Onboarding & Account Updates)",
+      "M_V",
+      "C_V",
+      "all"
+    ],
+    "tat_hours": 24,
+    "intent": "technical_system_error_reported_by_captain",
+    "trigger_keywords": [
+      "tms is closed",
+      "scan not working",
+      "scan issue",
+      "tech issue",
+      "system error",
+      "unable to update",
+      "unable to initialize",
+      "cannot scan",
+      "not scanning",
+      "trip error",
+      "connection error",
+      "system down",
+      "app error",
+      "app crashed",
+      "page not loading",
+      "trip not creating",
+      "chalans not generating",
+      "outbound not working",
+      "inward not working"
+    ],
+    "_keyword_note": "Do NOT add system names like 'log10' or 'metabase' here. Captains cite those systems as evidence sources, not tech failures.",
+    "required_inputs": [],
+    "validation_rules": [],
+    "scenarios": [
+      {
+        "scenario_id": "TECH_1",
+        "label": "Pure Tech Issue — No Loss Marking",
+        "conditions": [
+          "captain reports scan/system/process error",
+          "NO loss is being marked on the captain"
+        ],
+        "action": "respond",
+        "response_to_captain": "We understand you are facing a technical issue. Please contact the Log10 team directly with details of the error (screenshot/error message). They will resolve the technical issue.",
+        "sop_note": "Redirect to Log10 team. No loss action needed. Close ticket after reply.",
+        "escalation": {}
+      },
+      {
+        "scenario_id": "TECH_2",
+        "label": "Tech Issue + Loss Being Marked on Captain",
+        "conditions": [
+          "captain reports scan/system/process error OR cannot initialize a process",
+          "AND loss IS being marked OR the error is causing loss to be attributed to captain"
+        ],
+        "action": "escalate",
+        "response_to_captain": "We understand there is a technical issue causing incorrect loss marking. Please: 1) Contact the Log10 team with proof (screenshot of the error/system issue). 2) We are also escalating this ticket internally and will resolve the loss once the technical issue is confirmed. You will not be held liable for losses caused by the system error.",
+        "sop_note": "Two-track resolution: (A) Captain goes to Log10 team with tech proof. (B) We escalate internally to resolve the loss. Assure captain loss will be reversed.",
+        "escalation": {
+          "level": "L2",
+          "team": "L2_LOSSES",
+          "reason": "Tech-caused loss — system error confirmed by captain, needs loss reversal after Log10 verifies tech issue"
+        }
+      }
+    ]
+  }
+]

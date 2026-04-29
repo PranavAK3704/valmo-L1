@@ -1,0 +1,112 @@
+{
+  "Losses": [
+    {
+      "name": "Shortage Loss",
+      "template": "Dear Partner,\n\nThe issue raised regarding shortage loss pertains to the current month and is currently pending attribution. As per the defined SOP , this will be attributed in the next billing cycle in line with the new shortage SOP [Shortage SOP (1), Sample Approved Evidence ]\n\nYou may track losses attributed to any billing cycle via the Captain Panel (link here) under Loss Management.\n\nFor further clarification, please connect with your AM, CH, ZH, or PEM.\n\nThank you,\nValmo Partner Support"
+    },
+    {
+      "name": "Shortage Loss",
+      "template": "Dear Partner,\n\nWe have reviewed your ticket regarding the shortage loss marked. As per the defined SOP, the loss has been attributed to your DC, as the evidence shared does not meet the required SOP criteria.\n\nWe request you to refer to the Shortage SOP (1) and the Sample Approved Evidence  for future reference.\n\nYou may track losses attributed to any billing cycle via the Captain Panel (link here) under Loss Management.\n\nFor further clarification, please connect with your AM, CH, ZH, or PEM.\n\nThank you,\nValmo Partner Support"
+    },
+    {
+      "name": "Shortage Loss",
+      "template": "Dear Partner,\n\nWe have reviewed your ticket regarding the shortage loss marked. As per the defined SOP, the loss has been attributed to your DC, as the evidence shared does not meet the required SOP criteria.\n\nWe request you to refer to the Shortage SOP (1) and the Sample Approved Evidence  for future reference.\n\nYou may track losses attributed to any billing cycle via the Captain Panel (link here) under Loss Management.\n\nFor further clarification, please connect with your AM, CH, ZH, or PEM.\n\nThank you,\nValmo Partner Support"
+    },
+    {
+      "name": "Shortage Loss",
+      "template": "Dear Partner,\n\nWe have reviewed your ticket regarding the shortage loss marked. We observe that a shortage loss has been attributed to your DC; however, we are escalating this ticket to the relevant team as you qualify for a one time waiver. \n\nWe will revert to you within the next 4–6 business hours with an update.\n\nThank you,\nValmo Partner Support\""
+    },
+    {
+      "name": "nan",
+      "template": "Dear Partner,\n\nWe apologize for any confusion this may have caused. We have reviewed your request and noted that the loss has been recovered from the FE. Please be assured that no loss has been recorded against your DC.\n\nThank you for your cooperation.\n\nThank you,\nValmo Partner Support"
+    },
+    {
+      "name": "I received hardstop alert email",
+      "template": "Dear Partner,\n\nWe have reviewed the shipments shared by you and confirm that they have been successfully delivered/connected. Please be assured that no loss has been recorded against your account for these shipments.\n\nYou may continue to track losses attributed to any billing cycle via the Captain Panel under Loss Management.\n\nFor further clarification, please connect with your AM, CH, ZH, or PEM.\n\nRegards,\nValmo Partner Support"
+    },
+    {
+      "name": "I received hardstop alert email",
+      "template": "Dear Partner,\n\nWe have reviewed the shipments shared by you and confirm that they have been successfully delivered to the end users. Please be assured that no loss has been recorded against your account for these shipments.\n\nYou may continue to track losses attributed to any billing cycle via the Captain Panel under Loss Management.\n\nFor further clarification, please connect with your AM, CH, ZH, or PEM.\n\nRegards,\nValmo Partner Support"
+    },
+    {
+      "name": "I received hardstop alert email",
+      "template": "Dear Partner,\n\nWe have reviewed the shipments shared by you and observe that no action was taken within the stipulated 5-day TAT provided to deliver, connect with the customer, or mark the shipments as RTO.\n\nAs a result, the loss has been marked in accordance with the defined SOP, and there will be no change in the attribution.\n\nYou may continue to track losses attributed to any billing cycle via the Captain Panel under Loss Management.\n\nFor further clarification, please connect with your AM, CH, ZH, or PEM.\n\nRegards,\nValmo Partner Support"
+    }
+  ],
+  "Payments": [
+    {
+      "name": "Payment processed",
+      "template": "Dear Partner,\n\nAs per our records, your invoice was shared with you on [dd-mm-yyyy]. Your payment has been processed from our end on [dd-mm-yyyy] and should be credited on the Friday of that week. For more details, please check O-paper / Captain panel or connect with your AM/PEMs.\n\nThanks,\nValmo Support"
+    },
+    {
+      "name": "Pending Sign",
+      "template": "Dear Partner,\n\nAs per our records, your invoice was shared with you on [dd-mm-yyyy]. We notice that the invoice dated dd-mm-yyyy is pending signature from your end. Request you to please sign the invoice by thursday to release payment on friday on O-Paper to enable payment processing in the upcoming cycle.\n\nFor more details, please check O-paper / Captain panel or connect with your AM/PEMs.\n\n\nThanks,\nValmo Support"
+    },
+    {
+      "name": "Hold Negative",
+      "template": "Dear Partner,\n\nAs per our records, your invoice has not been generated because for the payment period xx–yy because the losses/deductions in your account are higher than your earnings. As a result, no payment will be generated for this cycle. A CN has however been generated as of [dd-mm-yyyy]. The loss amount will be adjusted in the next payment cycle. \n\nFor more details, please check O-paper / Captain panel or connect with your AM/PEMs.\n\nThanks,\nValmo Support"
+    },
+    {
+      "name": "No Payment",
+      "template": "Dear Partner,\n\nAs per our records, your invoice has not been generated because for the payment period xx–yy because because there are no earnings against your account for the payment period xx–yy. As a result, no payment will be generated for this cycle. A CN has however been generated as of [dd-mm-yyyy] <only if CN is generated>. The loss amount (if any)  will be adjusted in the next payment cycle. \n\nFor more details, please check the Captain panel or connect with your AM/PEMs.\n\n\nThanks,\nValmo Support"
+    },
+    {
+      "name": "GST Defaulter Hold",
+      "template": "Dear Partner,\n\nAs per our records, your invoice has not been generated for the payment period xx–yy because your payout has been placed on hold due to GST non-compliance (GST defaulter status). As per statutory requirements, payments cannot be released until the GST issue is resolved. We request you to please complete the necessary GST filing or payment at the earliest. Once the compliance is completed, the eligible payment will be processed in the subsequent payment cycle. \n\nFor more details, please check O-paper / Captain panel or connect with your AM/PEMs.\n\nThanks,\nValmo Support"
+    },
+    {
+      "name": "Risk is above threshold (COD pendency)",
+      "template": "Dear Partner,\n\nAs per our records, the invoice for the payment period xx–yy has not been generated because the payout for this cycle is on hold due to pending COD amounts exceeding the permissible limit. As per policy guidelines, payments cannot be released until the pending COD issues are resolved. We request you to please clear the pending COD is completed at the earliest. Once the risk level is within the defined threshold, the eligible payment will be processed in the subsequent payment cycle. \n\nFor more details, please check O-paper / Captain panel or connect with your AM/PEMs.\n\nThanks,\nValmo Support"
+    },
+    {
+      "name": "Risk is above threshold (COD + Shipment pendency )",
+      "template": "Dear Partner,\n\nAs per our records, the invoice for the payment period xx–yy has not been generated because your payout is currently on hold due to pending COD and shipment amounts exceeding the permitted limit. As per policy guidelines, payments cannot be released until the pending COD and shipment issues are resolved. We request you to please clear the pending COD and ensure shipments are completed at the earliest. Once the risk level is within the defined threshold, the eligible payment will be processed in the subsequent payment cycle. \n\nFor more details, please check O-paper / Captain panel or connect with your AM/PEMs.\n\nThanks,\nValmo Support"
+    },
+    {
+      "name": "Payment Hold due to GST>20 lakh",
+      "template": "Dear Partner,\n\nAs per our records, the invoice for the payment period xx–yy has not been generated since your annual billing value has crossed ₹20 lakh. As per statutory requirements, invoicing and payout cannot be processed without a valid GST number. We request you to please provide your GST number at the earliest. Once the GST number is updated and verified, eligible payouts and invoicing will be processed in the subsequent cycle. If you are facing any issues while updating your GST details, please raise a support ticket so that we can assist you. \n\nFor more details, please check O-paper / Captain panel or connect with your AM/PEMs.\n\nThanks,\nValmo Support"
+    },
+    {
+      "name": "Hold by ops",
+      "template": "Dear Partner,\n\nAs per our records, your invoice was generated on [dd-mm-yyyy], and we also see that it was signed on [dd-mm-yyyy]. However, your payment has currently been placed on hold by the ground ops.\n\nFor further details or clarification, please reach out to your AM/PEM, who will be able to assist you accordingly.\n\nThank You,\nValmo Support"
+    },
+    {
+      "name": "Onboarding Issue",
+      "template": "Dear Partner,\n\nAs per our records, the invoice for the payment period ww-yy has not been generated because you have not yet been onboarded onto O-Paper. Registration on O-Paper is MANDATORY for us to process payments. Please use the link below to complete your registration. \n\nIf you face any issues during the registration process, kindly reach out to us or connect with your AM/PEMs\n\n\nThanks,\nValmo Support"
+    },
+    {
+      "name": "F&F Vendor",
+      "template": "Dear Partner,\n\nAs per our records, the invoice for the payment period xx-yy has been generated because you have decided to discontinue with Valmo. We are sorry to see you go. As per our SOP, all payments effective from the opt-out date will be adjusted and released as part of the Full and Final settlement, which will be processed 45 days from the date of opt-out. We request you to wait until then to receive your payment.\n\nIf you reconsider and wish to continue working with us, please reach out to your AM/PEMs—we would be happy to have you back.\n\nThanks,\nValmo Support"
+    },
+    {
+      "name": "Grocery defaulter:",
+      "template": "Dear Partner,\n\nAs per our records, the invoice for the payment period xx-yy has been generated because your payout has been placed on hold due to grocery vertical payout restrictions, as there are pending grocery orders or COD amounts associated with your account. As per policy, payments cannot be released until these pending amounts are resolved. We request you to please clear the pending COD and complete any open grocery orders at the earliest. Once the pending issues are resolved, the eligible payment will be processed in the subsequent payment cycle. \n\nFor more details, please check O-paper / Captain panel or connect with your AM/PEMs.\n\nThanks,\nValmo Support\n"
+    },
+    {
+      "name": "Negative balance",
+      "template": "Dear Partner,\n\nAs per our records, the invoice for the payment period xx-yy has been generated because the losses/deductions in your account are higher than your earnings. As a result, no payment will be generated for this cycle. A CN has been generated on [dd-mm-yyyy].The loss amount will be adjusted in the next payment cycle. \n\nFor more details, please check O-paper / Captain panel or connect with your AM/PEMs.\n\nThanks,\nValmo Support"
+    },
+    {
+      "name": "Payment Failed",
+      "template": "Dear Partner,\n\nYour invoice has been generated as of [dd-mm-yyyy]. Your payment was processed as of [dd-mm-yyyy]. For the payment period xx–yy, your payout could not be processed due to a technical/operational issue. As a result, the payment has failed for this cycle. We request you to please verify your account details check with your bank and ensure all required information is updated. Once the issue is resolved, the payment will be retried in the next cycle. \n\nFor more details, please check O-paper / Captain panel or connect with your AM/PEMs.\n\nThanks,\nValmo Support"
+    },
+    {
+      "name": "Delta = 0",
+      "template": "Dear Partner,\n\nAs per our records for the payment cycle <mention payment cycle>, there is no dfference between the number of shipments delivered or picked up as reflected in your invoice and the real-time system data. The details are as follows:\n\nTotal Shipments Delivered: <>\nTotal Shipments Picked: <>\n\nFor a detailed breakdown of your payment, please visit your Captain Panel (link here) and follow the steps below:\nPayments → Select the relevant payment cycle → Scroll right → Click on “View Details” → Review each payment component for this cycle.\n\nAdditionally, for your information, billing is processed on a weekly basis. For the billing cycle <mention payment cycle>, only shipments that were delivered or picked up within this cycle window are considered for billing. Any shipments delivered or picked up outside this window will be processed in the next payment cycles.\n\nIf you require any additional clarification, you may reopen this ticket within 48 hours, and our team will be happy to assist you.\n\nThank you,\nValmo Partner Support"
+    },
+    {
+      "name": "Delta > 0",
+      "template": "Dear Partner,\n\nAs per our records for the payment cycle <mention payment cycle>, we have observed that the number of shipments delivered and/or picked up by you is higher than what is reflected in the invoice for this cycle. The details are outlined below for your reference:\n\nTotal Shipments Delivered (as per invoice): <>\nTotal Shipments Delivered (actuals): <>\nDelta in Delivered: <>\n\nTotal Shipments Picked (as per invoice): <>\nTotal Shipments Picked (actuals): <>\nDelta in Picked: <>\n\nThis difference has occurred due to a sync issue in our system. We acknowledge this and apologize for the inconvenience caused. Please be assured that the corresponding payment amount will be adjusted and processed to your account in the next payment cycle.\n\nFor a detailed breakdown of your payment, please visit your Captain Panel  (link here) and follow the steps below:\nPayments → Select the relevant payment cycle → Scroll right → Click on “View Details” → Review each payment component for this cycle.\n\nAdditionally, for your information, billing is processed on a weekly basis. For the billing cycle <mention payment cycle>, only shipments that were delivered or picked up within this cycle window are considered for billing. Any shipments delivered or picked up outside this window will be processed in the next payment cycles.\n\nIf you require any additional clarification, you may reopen this ticket within 48 hours, and our team will be happy to assist you.\n\nThank you,\nValmo Partner Support"
+    },
+    {
+      "name": "Delta < 0",
+      "template": "Dear Partner,\n\nAs per our records for the payment cycle <mention payment cycle>, we have observed that the number of shipments delivered and/or picked up by you is lower than what is reflected in the invoice for this cycle. The details are outlined below for your reference:\n\nTotal Shipments Delivered (as per invoice): <>\nTotal Shipments Delivered (actuals): <>\nDelta in Delivered: <>\n\nTotal Shipments Picked (as per invoice): <>\nTotal Shipments Picked (actuals): <>\nDelta in Picked: <>\n\nThe increase in the number of shipments reflected in the invoice is due to a sync issue in the previous payment cycle. The additional shipment delta from that cycle has now been adjusted and accounted for in the current payment cycle.\n\nFor a detailed breakdown of your payment, please visit your Captain Panel (link here) and follow the steps below:\nPayments → Select the relevant payment cycle → Scroll right → Click on “View Details” → Review each payment component for this cycle.\n\nAdditionally, for your information, billing is processed on a weekly basis. For the billing cycle <mention payment cycle>, only shipments that were delivered or picked up within this cycle window are considered for billing. Any shipments delivered or picked up outside this window will be processed in the next payment cycles.\n\nIf you require any additional clarification, you may reopen this ticket within 48 hours, and our team will be happy to assist you.\n\nThank you,\nValmo Partner Support"
+    }
+  ],
+  "COD": [
+    {
+      "name": "General",
+      "template": "Dear Partner,\n\nThe current COD pendency for your hub is reflecting as 0. The last deposit from your hub was received on [date] for an amount of Rs. XX.\nWe will be closing the ticket for now. You may reopen the ticket after 48 hours if the issue persists.\n\nThanks,\nValmo Captain Support"
+    }
+  ]
+}
