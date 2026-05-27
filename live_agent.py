@@ -37,13 +37,9 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 BASE_URL    = os.getenv("KAPTURE_URL", "https://valmostagging.kapturecrm.com")
-MODE_FILE   = Path("data/.mode")
 PROCESSED   = Path("data/live_processed.json")   # {ticket_id: last_msg_time}
 
-
-def get_mode() -> str:
-    try: return MODE_FILE.read_text().strip()
-    except: return "review"
+from src.api.mode import get_mode  # canonical mode source — gates auto_send
 
 
 def load_processed() -> dict:
@@ -144,9 +140,13 @@ async def process_batch(page, tickets: list, done: dict) -> int:
             full_ticket = {**t, **detail}
 
             # Use full description from INFO panel if available
+            # Prefer the role-aware captain_problem (Fix 11). Fall back to the
+            # canonical please_describe_issue field. Never use page_text_snippet —
+            # it's the entire Kapture UI rendered as text.
             full_desc = (
+                detail.get("captain_problem") or
                 detail.get("full_description") or
-                detail.get("page_text_snippet", "")[:500]
+                ""
             )
             if full_desc:
                 full_ticket["detail"] = full_desc

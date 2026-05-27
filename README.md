@@ -39,8 +39,14 @@ cp .env.example .env
 python run_dashboard.py
 # open http://localhost:8080
 
-# 4. Optional — process a batch of L&D tickets
-python _run_ld_batch.py
+# 4. Start the live agent (polls Kapture every 5 min)
+python live_agent.py --loop
+
+# 5. Run the eval harness on labeled tickets
+python -m src.eval.harness
+
+# 6. Run the smoke test suite (no Gemini cost)
+python tests/test_smoke.py
 ```
 
 ## Components
@@ -48,13 +54,16 @@ python _run_ld_batch.py
 - `run_dashboard.py` — FastAPI server + dashboard at `:8080`
 - `live_agent.py` — Kapture poller (fetches new tickets, runs them through brain)
 - `scrape_tickets_v2.py` — Kapture scraper (Playwright)
-- `batch_process_tickets.py` — generic batch runner
-- `_run_ld_batch.py` — L&D demo batch (filters auto-disposed noise)
-- `src/llm/agent_brain.py` — orchestrates Stage 0 + SOP + Gemini decision
+- `src/llm/agent_brain.py` — orchestrates Stage 0 + SOP + Gemini decision + guardrails
 - `src/llm/stage0.py` — situation assessment + domain KT upsert
-- `src/llm/gemini_client.py` — Gemini 3 Flash client with system prompt
-- `src/llm/sop_store.py` — ChromaDB-backed SOP retrieval
-- `src/api/decision_store.py` — SQLite store for decisions
+- `src/llm/scenario_families.py` — scenario→loss_type map for Rule 2 guardrail
+- `src/llm/gemini_client.py` — Gemini client with system prompt
+- `src/llm/sop_store.py` — ChromaDB-backed SOP retrieval (heading-aware chunker, queue-filtered)
+- `src/api/decision_store.py` — SQLite store for decisions + flip-rate stats
+- `src/api/mode.py` — review/autonomous mode source of truth
+- `src/api/stuck_clusters.py` — semantic clustering of unanswered stuck questions
+- `src/eval/harness.py` — eval runner (scenario/action accuracy, PRF, calibration, diff)
+- `tests/test_smoke.py` — 36-test end-to-end smoke suite
 - `data/sop_knowledge/` — SOP markdown files + structured JSON + Stage 0 domain
 
 ## Adding domain knowledge for a queue

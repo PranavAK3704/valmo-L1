@@ -68,12 +68,14 @@ def save_record(path: Path, data: dict):
 
 async def login(page: Page):
     log.info(f"Logging in as {EMAIL}")
-    await page.goto(f"{BASE_URL}/nui/login", wait_until="networkidle", timeout=30000)
+    # Use domcontentloaded instead of networkidle — Kapture has long-poll
+    # XHRs that never let networkidle fire under normal conditions.
+    await page.goto(f"{BASE_URL}/nui/login", wait_until="domcontentloaded", timeout=60000)
     await page.locator('input[name="userName"]').first.fill(EMAIL)
     await page.locator('input[type="password"]').first.fill(PASSWORD)
     await page.locator('button:has-text("Log in")').first.click()
     await page.wait_for_function(
-        "() => !window.location.href.includes('/nui/login')", timeout=30000
+        "() => !window.location.href.includes('/nui/login')", timeout=60000
     )
     await page.wait_for_timeout(2000)
     log.info("Logged in OK")
@@ -188,7 +190,9 @@ async def extract_ticket(page: Page, task_id: str, ticket_id: str) -> dict:
     page.on("response", _sync_handle)
 
     detail_url = f"{BASE_URL}/nui/tickets/completed_by_me/7/-1/0/detail/{task_id}/{ticket_id}"
-    await page.goto(detail_url, wait_until="networkidle", timeout=30000)
+    # Use domcontentloaded — Kapture's long-poll XHRs prevent networkidle
+    # from ever firing under normal conditions, same as the login flow.
+    await page.goto(detail_url, wait_until="domcontentloaded", timeout=60000)
     await page.wait_for_timeout(3000)   # let lazy-loaded calls finish
 
     # Also explicitly call conversation APIs we know about
@@ -262,9 +266,12 @@ async def extract_ticket(page: Page, task_id: str, ticket_id: str) -> dict:
     if captured.get("detail") and isinstance(captured["detail"], dict):
         ticket_obj = captured["detail"].get("ticket") or captured["detail"]
 
-    # Full description: API field may be truncated or HTML; DOM scrape is rendered text
-    # The DOM version (innerText) gives the full visible text including table cell content
-    api_desc_raw = parsed.get("please_describe_issue") or (ticket_obj.get("detail") if isinstance(ticket_obj, dict) else "") or ""
+    # Canonical captain description comes ONLY from field 26926 ("Please Describe
+    # Issue In Detail"). The Kapture-internal `ticket.detail` field looks similar
+    # but is actually the LATEST dispose draft / ticket-state body — i.e. L1 voice.
+    # Falling back to it pollutes captain_problem with L1 reply text.
+    # See ticket 779244875125 — described in the diff that introduced this.
+    api_desc_raw = parsed.get("please_describe_issue") or ""
     api_desc     = _strip_html(api_desc_raw)
 
     # DOM gives rendered text — tables come out as tab-separated columns
@@ -279,11 +286,103 @@ async def extract_ticket(page: Page, task_id: str, ticket_id: str) -> dict:
 
     # Prefer whichever is longer (DOM usually has more since API truncates)
     if len(dom_desc_label) > len(api_desc.strip()):
-        full_description = dom_desc_label
-        log.info(f"[extract_ticket] Using DOM description ({len(full_description)} chars) — API had {len(api_desc)} chars")
+        canonical_description = dom_desc_label
+        log.info(f"[extract_ticket] Using DOM description ({len(canonical_description)} chars) — API had {len(api_desc)} chars")
     else:
-        full_description = api_desc
-        log.info(f"[extract_ticket] Using API description ({len(full_description)} chars)")
+        canonical_description = api_desc
+
+    # ── Role-aware thread parsing ──────────────────────────────────
+    # The canonical captain email comes from the ticket detail object.
+    captain_email = ""
+    if isinstance(ticket_obj, dict):
+        captain_email = (ticket_obj.get("email") or ticket_obj.get("customerEmail")
+                         or ticket_obj.get("userEmail") or "")
+
+    l1_notes_from_notes_table = _parse_notes(captured)
+    email_thread = _parse_email_thread(captured, captain_email)
+    captain_messages = [m for m in email_thread if m["role"] == "captain"]
+    l1_messages_from_email = [m for m in email_thread if m["role"] == "l1"]
+
+    # Combine all L1 voice for downstream context
+    l1_messages = sorted(l1_notes_from_notes_table + l1_messages_from_email,
+                          key=lambda m: m.get("ts") or "")
+
+    # ── Misplaced-description guardrail ───────────────────────────
+    misplaced = _detect_misplaced_description(panel_fields, canonical_description)
+
+    # Detect "attachment uploaded into wrong field" — captains sometimes drop
+    # file URLs into the AWB field or other short fields. Surface this so the
+    # agent can offer to read the attachment instead of demanding text.
+    # Cover xlsx/xls/csv too — Excel sheets of AWBs are common.
+    _ATT_EXT_RE = re.compile(r"\.(jpe?g|png|pdf|webp|gif|xlsx|xls|csv)\b", re.I)
+    _STORAGE_HINT_RE = re.compile(r"googleapis\.com|/storage/|kapture-p-v2", re.I)
+
+    misplaced_attachment = ""
+    for label, val in (panel_fields or {}).items():
+        if (label or "").strip().lower() in _DESCRIPTION_FIELD_NAMES:
+            continue
+        v = str(val or "")
+        if _ATT_EXT_RE.search(v) or _STORAGE_HINT_RE.search(v):
+            misplaced_attachment = label
+            break
+    awb_field_raw = parsed.get("awbs") or ""
+    if _ATT_EXT_RE.search(awb_field_raw) or _STORAGE_HINT_RE.search(awb_field_raw):
+        # awb_field has a non-AWB URL — flag it.
+        if not misplaced_attachment:
+            misplaced_attachment = "AW Bs"
+
+    # ── Promote URLs found in awb_field (and other short fields) into
+    # attachment_urls so the OCR/Excel-parser pipeline picks them up.
+    # Without this, files uploaded into the AWB form slot are silently lost.
+    existing_urls = list(parsed.get("attachment_urls") or [])
+    seen_urls = set(existing_urls)
+    _URL_RE = re.compile(r"https?://[^\s,;'\"]+", re.I)
+    sources_to_scan = [awb_field_raw] + [
+        str(v or "") for k, v in (panel_fields or {}).items()
+        if (k or "").strip().lower() not in _DESCRIPTION_FIELD_NAMES
+    ]
+    for src in sources_to_scan:
+        for u in _URL_RE.findall(src):
+            # Only count file-like URLs — avoid pulling in random http links from text
+            if _ATT_EXT_RE.search(u) or _STORAGE_HINT_RE.search(u):
+                if u not in seen_urls:
+                    existing_urls.append(u)
+                    seen_urls.add(u)
+                    log.info(f"[extract_ticket] promoted URL into attachment_urls: {u[:120]}")
+    parsed["attachment_urls"] = existing_urls
+
+    # ── Priority-laddered captain_problem resolver ────────────────
+    # 1) canonical description field if substantive
+    # 2) first captain email/conversation message
+    # 3) misplaced field content (captain typed in the wrong slot)
+    # 4) concatenated captain messages
+    # 5) empty (agent will go needs_info)
+    captain_problem = ""
+    captain_problem_source = ""
+    if canonical_description and len(canonical_description.strip()) >= 30:
+        captain_problem = canonical_description.strip()
+        captain_problem_source = "please_describe_issue"
+    elif captain_messages:
+        captain_problem = captain_messages[0]["body"]
+        captain_problem_source = f"first_captain_message:{captain_messages[0]['ts']}"
+    elif misplaced:
+        captain_problem = misplaced["value"]
+        captain_problem_source = f"misplaced_field:{misplaced['field']}"
+    elif captain_messages:
+        captain_problem = "\n\n".join(m["body"] for m in captain_messages[:3])
+        captain_problem_source = "concatenated_captain_messages"
+
+    if not captain_problem:
+        log.info(f"[extract_ticket] No captain_problem resolvable — agent will go needs_info")
+    else:
+        log.info(f"[extract_ticket] captain_problem source={captain_problem_source!r} "
+                 f"len={len(captain_problem)}")
+    if misplaced:
+        log.warning(f"[extract_ticket] MISPLACED description detected in field "
+                    f"{misplaced['field']!r} ({len(misplaced['value'])} chars)")
+    if misplaced_attachment:
+        log.warning(f"[extract_ticket] MISPLACED attachment detected in field "
+                    f"{misplaced_attachment!r}")
 
     return {
         "url":               detail_url,
@@ -293,14 +392,220 @@ async def extract_ticket(page: Page, task_id: str, ticket_id: str) -> dict:
         "awbs_on_page":      awbs,
         "page_text_snippet": page_text[:3000],
         # ── Top-level clean fields ──
-        "full_description":  full_description,
+        "full_description":  canonical_description,    # legacy: what was in the description field
         "subject_line":      parsed.get("subject_line") or (ticket_obj.get("taskTitle") if isinstance(ticket_obj, dict) else "") or "",
         "hub_code_field":    parsed.get("hub_code") or "",
         "awb_field":         parsed.get("awbs") or "",
         "sub_type_field":    parsed.get("sub_type") or (ticket_obj.get("folders", [None, None, None])[2] if isinstance(ticket_obj, dict) else "") or "",
         "sub_sub_type_field":parsed.get("sub_sub_type") or "",
         "attachment_urls":   parsed.get("attachment_urls") or [],  # list of S3 URLs
+        # ── Role-aware extraction (new) ──
+        "captain_email":     captain_email,
+        "captain_problem":   captain_problem,
+        "captain_problem_source": captain_problem_source,
+        "captain_messages":  captain_messages,           # all captain voice from email thread
+        "l1_messages":       l1_messages,                # all L1 voice (notes table + L1 emails)
+        "misplaced_description": misplaced,              # {} or {"field": ..., "value": ...}
+        "misplaced_attachment_field": misplaced_attachment,  # "" or field name where image URL leaked in
+        "info_panel_fields": panel_fields,               # full raw panel for audit
     }
+
+
+# ─── Role-aware thread parsing ────────────────────────────────────
+# Notes table = exclusively L1 voice (internal staff dispose drafts + info notes).
+# Captain's voice lives in email/conversations endpoints, OR misplaced into
+# info-panel fields (Transaction ID, Previous Ticket, etc.).
+#
+# Discriminator for email senders: anyone @meesho.com (or matching the
+# ticket's assignedToEmail) is L1; everything else is captain. The captain's
+# canonical email comes from ticket.detail.ticket.email.
+
+_L1_EMAIL_DOMAINS = ("@meesho.com", "@valmostaging.kapturecrm.com",
+                     "@valmostagging.kapturecrm.com")  # cover both spellings
+
+# Field names in the info panel that are EXPECTED to hold the description.
+# Everything else is checked for misplaced prose.
+_DESCRIPTION_FIELD_NAMES = {
+    "please describe issue in detail",
+    "issue description",
+    "describe issue",
+}
+# Field names that are EXPECTED to be short / structured (IDs, codes, flags).
+# These are the prime candidates for misplaced descriptions.
+_SHORT_FIELD_NAMES = {
+    "transaction id", "transactionid",
+    "hub code", "hub_code",
+    "aw bs", "awbs", "awb numbers",
+    "sub type", "sub sub type",
+    "previous ticket raised for this concern if any",
+    "previous ticket raised", "previous ticket",
+    "current landing volume", "promised load if any",
+    "shipments impacted", "request type", "issue type",
+    "web form attachement", "ticket attachement",
+}
+
+
+def _strip_dispose(detail: str) -> str:
+    """Remove the <dispose>...</dispose> wrapper Kapture uses for outgoing L1
+    drafts. Handles both balanced and unterminated tags."""
+    if not detail:
+        return ""
+    s = re.sub(r"^\s*<dispose>", "", detail)
+    s = re.sub(r"</dispose>\s*$", "", s)
+    return s
+
+
+def _strip_html_minimal(s: str) -> str:
+    """Strip HTML tags + collapse whitespace for prompt display."""
+    if not s:
+        return ""
+    s = re.sub(r"<[^>]+>", " ", s)
+    s = s.replace(" ", " ").replace("​", "").replace("﻿", "")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _parse_notes(captured: dict) -> list[dict]:
+    """Extract entries from the notes table. Every note in this table is
+    authored by Kapture-internal staff (L1 agents). Returns:
+        [{role: 'l1', sender: name, body: cleaned_text, ts: date, raw_type: ...}, ...]
+    sorted by date ascending.
+    """
+    raw_notes = captured.get("notes") or {}
+    items = []
+    if isinstance(raw_notes, dict):
+        items = raw_notes.get("notes") or raw_notes.get("list") or []
+    elif isinstance(raw_notes, list):
+        items = raw_notes
+    out = []
+    for n in items:
+        if not isinstance(n, dict):
+            continue
+        body = _strip_html_minimal(_strip_dispose(n.get("detail") or ""))
+        if not body:
+            continue
+        out.append({
+            "role":     "l1",  # notes endpoint is exclusively L1
+            "sender":   n.get("creatorName") or n.get("memberName") or "L1",
+            "body":     body,
+            "ts":       n.get("date", ""),
+            "raw_type": n.get("type", ""),
+            "note_id":  n.get("id"),
+        })
+    out.sort(key=lambda x: x["ts"] or "")
+    return out
+
+
+def _parse_email_thread(captured: dict, captain_email: str) -> list[dict]:
+    """Extract messages from email + conversations endpoints. Classify sender
+    as 'captain' vs 'l1' using email match + L1 domain heuristic. Returns
+    chronologically-ordered list of {role, sender, sender_email, body, ts}."""
+    captain_email = (captain_email or "").strip().lower()
+
+    def _classify(sender_email: str, sender_name: str = "") -> str:
+        e = (sender_email or "").strip().lower()
+        if captain_email and e == captain_email:
+            return "captain"
+        if any(e.endswith(d) for d in _L1_EMAIL_DOMAINS):
+            return "l1"
+        # Heuristic: if it doesn't match captain and isn't a known L1 domain,
+        # default to captain — surfacing unknown senders to the reviewer is
+        # safer than silently treating them as L1 noise.
+        return "captain" if e else "l1"
+
+    sources = []
+    for key in ("email", "conversations", "emailList"):
+        val = captured.get(key)
+        if isinstance(val, dict):
+            for sub in ("emails", "conversations", "list", "emailList", "items"):
+                lst = val.get(sub)
+                if isinstance(lst, list):
+                    sources.extend(lst)
+                    break
+        elif isinstance(val, list):
+            sources.extend(val)
+
+    out = []
+    seen_ids = set()
+    for msg in sources:
+        if not isinstance(msg, dict):
+            continue
+        mid = msg.get("id") or msg.get("emailId") or msg.get("messageId")
+        if mid and mid in seen_ids:
+            continue
+        if mid:
+            seen_ids.add(mid)
+        sender_email = (
+            msg.get("fromEmail") or msg.get("senderEmail") or msg.get("from") or
+            msg.get("sender_email") or msg.get("emailFrom") or ""
+        )
+        sender_name = (
+            msg.get("fromName") or msg.get("senderName") or msg.get("sender_name") or
+            msg.get("name") or ""
+        )
+        body_raw = (
+            msg.get("body") or msg.get("message") or msg.get("emailBody") or
+            msg.get("email_body") or msg.get("description") or msg.get("detail") or ""
+        )
+        body = _strip_html_minimal(_strip_dispose(body_raw))
+        if not body:
+            continue
+        ts = msg.get("date") or msg.get("createdAt") or msg.get("created_at") or msg.get("time") or ""
+        out.append({
+            "role":         _classify(sender_email, sender_name),
+            "sender":       sender_name or sender_email or "Unknown",
+            "sender_email": sender_email,
+            "body":         body,
+            "ts":           ts,
+        })
+    out.sort(key=lambda x: x["ts"] or "")
+    return out
+
+
+def _detect_misplaced_description(panel_fields: dict, canonical_desc: str) -> dict:
+    """Scan info-panel fields for prose content in fields that are expected
+    to be short/structured. Returns {"field": name, "value": text} when
+    a likely misplaced description is found, else {}.
+
+    Heuristic: a field qualifies as 'misplaced description' if it's NOT
+    the description field, its value is > 120 chars, AND the text looks
+    like natural prose (starts with a greeting OR has >= 3 sentence breaks
+    OR multi-line)."""
+    if not isinstance(panel_fields, dict):
+        return {}
+    canonical_desc = (canonical_desc or "").strip()
+    canon_len = len(canonical_desc)
+    candidates = []
+    for label, val in panel_fields.items():
+        lname = (label or "").strip().lower()
+        if lname in _DESCRIPTION_FIELD_NAMES:
+            continue
+        v = (val or "").strip()
+        if len(v) < 120:
+            continue
+        # Don't re-flag content that's identical to (or contained in) the canonical desc
+        if canonical_desc and (v in canonical_desc or canonical_desc in v):
+            continue
+        # Prose heuristics
+        is_prose = (
+            re.match(r"^(dear|hi|hello|team|sir|madam|namaste)\b", v, re.I) is not None
+            or v.count(".") >= 3
+            or v.count(",") >= 4
+            or "\n" in v
+        )
+        if not is_prose:
+            continue
+        candidates.append({"field": label, "value": v, "len": len(v)})
+
+    if not candidates:
+        return {}
+    # Pick the most prose-like (prefer longer, but prefer short-expected fields too)
+    candidates.sort(key=lambda c: (
+        0 if c["field"].strip().lower() in _SHORT_FIELD_NAMES else 1,
+        -c["len"],
+    ))
+    best = candidates[0]
+    return {"field": best["field"], "value": best["value"]}
 
 
 def _parse_additional_info(captured: dict) -> dict:
@@ -352,15 +657,21 @@ def _parse_additional_info(captured: dict) -> dict:
         if val:
             result[key] = str(val).strip()
 
-    # Also scan by displayName for unknown instances
+    # Also scan by displayName for unknown instances — BUT skip
+    # `please_describe_issue` here. Kapture has multiple fields whose
+    # displayName contains "describe" or "description", and at least one
+    # of them holds the L1 dispose draft body (looks like
+    # `<dispose>Dear Partner, we understand your concern...`).
+    # Letting that match would silently overwrite captain_problem with L1
+    # voice — exactly the bug we found on ticket 779244875125. The known
+    # field-ID mapping above is the only safe source for the captain's
+    # description text.
     for fid, name in id_to_name.items():
         val = all_fields.get(fid, "")
         if not val:
             continue
         nl = name.lower()
-        if "describe" in nl or "description" in nl:
-            result.setdefault("please_describe_issue", str(val))
-        elif "subject" in nl:
+        if "subject" in nl:
             result.setdefault("subject_line", str(val))
         elif "hub" in nl:
             result.setdefault("hub_code", str(val))

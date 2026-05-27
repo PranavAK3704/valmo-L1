@@ -328,11 +328,42 @@
   .thinker-step.blocked::after { background:var(--red); }
   @keyframes step-blocked-flash { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 18px rgba(239,68,68,.45)} }
 
-  .step-icon-wrap { flex-shrink:0; width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:16px; }
+  .step-icon-wrap { flex-shrink:0; width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:16px;
+                     animation:step-icon-pop .5s cubic-bezier(.34,1.56,.64,1) both; }
+  @keyframes step-icon-pop {
+    0%   { transform:scale(.3) rotate(-12deg); opacity:0; }
+    60%  { transform:scale(1.18) rotate(6deg);   opacity:1; }
+    100% { transform:scale(1) rotate(0);         opacity:1; }
+  }
   .done .step-icon-wrap { background:rgba(34,197,94,.15); }
   .warning .step-icon-wrap { background:rgba(245,158,11,.15); }
-  .thinking-anim .step-icon-wrap { background:rgba(108,99,255,.18); }
+  .thinking-anim .step-icon-wrap { background:rgba(108,99,255,.18);
+                                    animation:step-icon-pop .5s cubic-bezier(.34,1.56,.64,1) both,
+                                              icon-thinking-spin 2.4s linear .5s infinite; }
+  @keyframes icon-thinking-spin {
+    0%   { transform:rotate(0) scale(1); }
+    50%  { transform:rotate(180deg) scale(1.06); }
+    100% { transform:rotate(360deg) scale(1); }
+  }
   .blocked .step-icon-wrap { background:rgba(239,68,68,.15); }
+
+  /* "Scanning documents" shimmer — fires on data-fetching steps */
+  .thinker-step.scanning::before {
+    content:''; position:absolute; top:0; bottom:0; left:0; width:80px;
+    background:linear-gradient(90deg, transparent, rgba(108,99,255,.22), transparent);
+    animation:scan-sweep 1.4s linear infinite; pointer-events:none;
+  }
+  @keyframes scan-sweep {
+    0%   { left:-80px; }
+    100% { left:100%; }
+  }
+
+  /* Blinking cursor at the end of an actively-typewriting line */
+  .step-detail.typing::after {
+    content:'▍'; color:var(--accent); margin-left:2px;
+    animation:cursor-blink .9s steps(2, end) infinite;
+  }
+  @keyframes cursor-blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
 
   .step-body { flex:1; min-width:0; }
   .step-label { font-size:13px; font-weight:700; margin-bottom:3px; }
@@ -399,16 +430,24 @@
   <!-- PAGE TABS -->
   <div class="page-tabs">
     <button class="page-tab active" onclick="switchTab('overview', this)">Overview</button>
-    <button class="page-tab" onclick="switchTab('cxo', this)">⚡ CXO View</button>
     <button class="page-tab" onclick="switchTab('kt', this)">KT Engine</button>
     <button class="page-tab" onclick="switchTab('stuck', this)">Stuck Queue <span id="stuckBadge" style="display:none;background:var(--yellow);color:#000;border-radius:10px;font-size:11px;padding:1px 7px;margin-left:4px;"></span></button>
     <button class="page-tab" onclick="switchTab('health', this)">Health</button>
+    <button class="page-tab" onclick="switchTab('audit', this); initScenarioAudit()">🔬 Scenario Audit</button>
     <button class="page-tab" onclick="switchTab('livetest', this)">🔍 Test Ticket</button>
     <button class="page-tab thinker-tab-btn" onclick="switchTab('thinker', this)">🧠 Thinker</button>
   </div>
 
   <!-- ═══ OVERVIEW PANEL ═══════════════════════════════════════════ -->
   <div class="page-panel active" id="panel-overview">
+    <!-- ── Admin row: process tickets + wipe (gated) ── -->
+    <div id="adminRow" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px">
+      <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600">⚙ Admin</span>
+      <button class="btn-view" onclick="openProcessTicketsModal()" style="font-size:12px;padding:6px 14px">📥 Process Tickets</button>
+      <button class="btn-reject" onclick="openWipeModal()" style="font-size:12px;padding:6px 14px;background:rgba(239,68,68,.12);color:#ef4444;border:1px solid rgba(239,68,68,.4)">🗑 Wipe Everything…</button>
+      <span id="adminStatus" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
+    </div>
+
     <h2>Overview</h2>
     <div class="metrics-grid" id="metricsGrid">
       <div class="loading">Loading metrics...</div>
@@ -457,10 +496,6 @@
     </div>
   </div>
 
-  <!-- ═══ CXO VIEW PANEL ═══════════════════════════════════════════ -->
-  <div class="page-panel" id="panel-cxo">
-    <div id="cxoContent"><div class="loading">Loading CXO metrics...</div></div>
-  </div>
 
   <!-- ═══ KT ENGINE PANEL ═══════════════════════════════════════════ -->
   <div class="page-panel" id="panel-kt">
@@ -503,12 +538,90 @@ Example: 'When a captain says suspicious shipment, always ask what exactly is su
 
       <!-- Mode tabs -->
       <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:14px">
-        <button class="ktmode-tab ktmode-active" data-mode="json" onclick="switchKTMode('json')" style="background:none;border:none;border-bottom:2px solid var(--accent);color:var(--accent);padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600;margin-bottom:-1px">JSON mode (recommended)</button>
-        <button class="ktmode-tab" data-mode="prose" onclick="switchKTMode('prose')" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);padding:8px 16px;cursor:pointer;font-size:13px;margin-bottom:-1px">Prose mode (Gemini-parsed)</button>
+        <button class="ktmode-tab ktmode-active" data-mode="guided" onclick="switchKTMode('guided')" style="background:none;border:none;border-bottom:2px solid var(--accent);color:var(--accent);padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600;margin-bottom:-1px">Guided (English)</button>
+        <button class="ktmode-tab" data-mode="json" onclick="switchKTMode('json')" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);padding:8px 16px;cursor:pointer;font-size:13px;margin-bottom:-1px">JSON (advanced)</button>
+      </div>
+
+      <!-- GUIDED MODE -->
+      <div id="ktMode-guided">
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          Answer the four questions below in plain English. Click <strong>Extract</strong> — Gemini converts your answers to structured knowledge, shows you what it understood, and asks specific follow-up questions for anything missing. Click <strong>Activate</strong> when you're satisfied.
+        </p>
+        <div class="kt-row" style="margin-bottom:12px">
+          <select class="kt-select" id="guidedQueueKey" style="flex:1">
+            <option value="">— Auto-detect queue from your answers —</option>
+          </select>
+        </div>
+
+        <div style="margin-bottom:14px">
+          <label style="display:block;font-weight:600;font-size:13px;margin-bottom:4px">A. What names does this queue go by?</label>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">List every label Kapture or captains might use (one per line). E.g. <em>M_V, Payments, payments</em>.</div>
+          <textarea class="kt-textarea" id="guidedAliases" rows="3" placeholder="M_V&#10;Payments&#10;payments"></textarea>
+        </div>
+
+        <div style="margin-bottom:14px">
+          <label style="display:block;font-weight:600;font-size:13px;margin-bottom:4px">B. What types of issues come into this queue?</label>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">For each issue type describe: what the captain typically writes, what you check to verify, and what reply you send. E.g. <em>"Payment not received: captain says 'salary not credited'. We check fnf_dashboard.payment_process_date — if blank, payment not initiated, reply with timeline. If filled and remark says Hold Negative, escalate to finance."</em></div>
+          <textarea class="kt-textarea" id="guidedIssues" rows="6" placeholder="Issue type 1: ...&#10;Issue type 2: ...&#10;Issue type 3: ..."></textarea>
+        </div>
+
+        <div style="margin-bottom:14px">
+          <label style="display:block;font-weight:600;font-size:13px;margin-bottom:4px">C. Which Metabase queries do you use, and what do their columns mean?</label>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">For each query: name, column list, what each column tells you, and which values map to which action. E.g. <em>"captain_payment_status_and_amount: hub_code (captain's hub), enbolt_id (invoice ref), payment_status (PAID/PENDING/HOLD/PROCESSING), remarks (free-text reason). If status=HOLD and remarks mentions GST → tell captain to clear GST first."</em></div>
+          <textarea class="kt-textarea" id="guidedMetabase" rows="6" placeholder="Query 1 — columns and meaning...&#10;Query 2 — columns and meaning..."></textarea>
+        </div>
+
+        <div style="margin-bottom:14px">
+          <label style="display:block;font-weight:600;font-size:13px;margin-bottom:4px">D. Are there any rules the agent must always follow?</label>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Pre-checks, hard never-do's, mandatory data lookups. Leave blank if none. E.g. <em>"Always check fnf_dashboard before captain_payment_status. Never quote payment dates without confirming via remarks. If enbolt_id missing from ticket, ask captain first."</em></div>
+          <textarea class="kt-textarea" id="guidedRules" rows="3" placeholder="Rule 1...&#10;Rule 2..."></textarea>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+          <button class="kt-submit" onclick="guidedExtract()" id="guidedExtractBtn">⚙ Extract Knowledge</button>
+          <button class="kt-submit" id="guidedActivateBtn" onclick="guidedActivate()" disabled style="opacity:.5">⚡ Activate Queue</button>
+          <span class="kt-success" id="guidedSuccess" style="display:none"></span>
+        </div>
+
+        <!-- Extraction result panel -->
+        <div id="guidedResult" style="display:none;border:1px solid var(--border);border-radius:10px;padding:14px;background:var(--surface2)">
+          <div id="guidedSummaryBlock" style="margin-bottom:14px">
+            <div style="font-size:12px;color:var(--muted);margin-bottom:4px;font-weight:600;letter-spacing:.5px">WHAT I UNDERSTOOD</div>
+            <div id="guidedSummary" style="font-size:13px;line-height:1.5;white-space:pre-wrap"></div>
+          </div>
+          <div id="guidedValidationBlock" style="margin-bottom:14px;font-size:12px"></div>
+          <div id="guidedGapsBlock" style="margin-bottom:14px;display:none">
+            <div style="font-size:12px;color:var(--yellow);margin-bottom:6px;font-weight:600;letter-spacing:.5px">⚠ STILL MISSING — answer these and click Re-extract</div>
+            <div id="guidedGaps"></div>
+            <button class="kt-submit" style="margin-top:8px;background:var(--surface);border:1px solid var(--border);color:var(--text)" onclick="guidedExtract(true)">↻ Re-extract with my added answers</button>
+          </div>
+
+          <!-- ── Test tickets subsection ── -->
+          <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:8px">
+            <div style="font-size:12px;color:var(--accent);margin-bottom:6px;font-weight:600;letter-spacing:.5px">🧪 TEST ON REAL TICKETS (before activating)</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
+              Run a few real tickets through the agent using the staged knowledge above (nothing is saved). Verify the actions look right, then activate.
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+              <input type="text" id="guidedTestIds" placeholder="Ticket IDs (comma-separated) — leave blank to auto-pick"
+                style="flex:1;min-width:240px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px">
+              <input type="number" id="guidedTestN" value="3" min="1" max="5"
+                title="How many tickets to auto-pick when no IDs given"
+                style="width:56px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;text-align:center">
+              <button class="kt-submit" id="guidedTestBtn" onclick="guidedTest()">▶ Run Test</button>
+            </div>
+            <div id="guidedTestResults" style="margin-top:10px"></div>
+          </div>
+
+          <details style="margin-top:14px">
+            <summary style="font-size:11px;color:var(--muted);cursor:pointer">Show parsed JSON</summary>
+            <pre id="guidedJsonPreview" style="font-size:11px;background:var(--bg);padding:10px;border-radius:6px;margin-top:6px;overflow-x:auto;border:1px solid var(--border)"></pre>
+          </details>
+        </div>
       </div>
 
       <!-- JSON MODE -->
-      <div id="ktMode-json">
+      <div id="ktMode-json" style="display:none">
         <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
           <select class="kt-select" id="domainTplQueue" style="flex:1;min-width:180px">
             <option value="">— Pick a queue —</option>
@@ -521,21 +634,6 @@ Example: 'When a captain says suspicious shipment, always ask what exactly is su
           <button class="kt-submit" style="background:var(--surface2);border:1px solid var(--border);color:var(--text)" onclick="validateDomainJSON()">✓ Validate</button>
           <button class="kt-submit" id="domainActivateBtn" onclick="submitDomainJSON()" disabled style="opacity:.5">⚡ Activate Queue</button>
           <span class="kt-success" id="domainJsonSuccess" style="display:none"></span>
-        </div>
-      </div>
-
-      <!-- PROSE MODE -->
-      <div id="ktMode-prose" style="display:none">
-        <div class="kt-row">
-          <select class="kt-select" id="domainQueueKey" style="flex:1">
-            <option value="">— Auto-detect queue from text —</option>
-          </select>
-        </div>
-        <textarea class="kt-textarea" id="domainText" placeholder="Example: 'For the payments queue, the Captain Payment Status query returns columns hub_code, enbolt_id, invoice_no, payment_status and remarks. The remarks column drives the response template — values like Pending E-Sign, Hold Negative, GST Defaulter Hold each map to a specific reply.'"></textarea>
-        <p style="font-size:11px;color:var(--yellow);margin:6px 0">⚠ Prose mode runs your text through Gemini — slots may be missed silently. Prefer JSON mode for full activation.</p>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <button class="kt-submit" onclick="submitDomainKT()">Activate Queue (Prose)</button>
-          <span class="kt-success" id="domainSuccess" style="display:none">Queue activated!</span>
         </div>
       </div>
     </div>
@@ -559,6 +657,22 @@ Example: 'When a captain says suspicious shipment, always ask what exactly is su
         Your answer gets added to the agent's knowledge base immediately.
       </p>
     </div>
+
+    <!-- Stuck Clusters — group similar unanswered questions -->
+    <div style="margin-bottom:24px;border:1px solid var(--border);border-radius:10px;padding:14px;background:var(--surface2)">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <h3 style="margin:0;font-size:14px">🔮 Stuck Clusters (top 10)</h3>
+        <span id="clustersMeta" style="font-size:11px;color:var(--muted)"></span>
+        <button class="btn-view" onclick="loadStuckClusters(true)" style="margin-left:auto;font-size:11px;padding:4px 10px">↻ Recompute</button>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin:0 0 10px 0">
+        Similar unanswered questions grouped by semantic similarity (last 30 days, ≤0.35 cosine distance).
+        High-volume clusters surface root causes worth fixing in the KT engine rather than one-at-a-time.
+      </p>
+      <div id="stuckClustersContent"><div class="loading">Loading clusters…</div></div>
+    </div>
+
+    <h3 style="margin:0 0 10px 0;font-size:14px">📥 Individual Stuck Tickets</h3>
     <div id="stuckList">
       <div class="loading">Loading...</div>
     </div>
@@ -628,9 +742,34 @@ Example: 'When a captain says suspicious shipment, always ask what exactly is su
   <!-- ═══ HEALTH PANEL ══════════════════════════════════════════════ -->
   <div class="page-panel" id="panel-health">
     <div style="margin-bottom:16px;display:flex;align-items:center;gap:12px">
-      <button class="btn-view" onclick="loadHealth()">↻ Refresh</button>
+      <button class="btn-view" onclick="loadHealth(); loadFlipRates()">↻ Refresh</button>
     </div>
     <div id="healthContent"><div class="loading">Loading...</div></div>
+
+    <!-- Flip-rate table — reviewer disagreements per scenario -->
+    <div style="margin-top:24px">
+      <h3 style="margin-bottom:6px">Per-Scenario Flip Rates</h3>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:10px">
+        How often reviewers corrected the agent's scenario choice. Calibration data only —
+        scenarios need ≥50 reviewed decisions before this becomes statistically meaningful.
+      </p>
+      <div id="flipRatesContent"><div class="loading">Loading...</div></div>
+    </div>
+  </div>
+
+  <!-- ═══ SCENARIO AUDIT PANEL ════════════════════════════════════ -->
+  <div class="page-panel" id="panel-audit">
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
+      <h2 style="margin:0">What does the agent believe?</h2>
+      <select id="auditScenarioPicker" onchange="loadScenarioAudit(this.value)"
+        style="flex:1;min-width:240px;max-width:360px;padding:8px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:13px">
+        <option value="">— Pick a scenario —</option>
+      </select>
+      <span id="auditSummary" style="font-size:12px;color:var(--muted)"></span>
+    </div>
+    <div id="auditContent">
+      <div class="empty">Pick a scenario above to see SOP entry, Stage 0 mapping, ChromaDB knowledge, recent decisions and flip-rate.</div>
+    </div>
   </div>
 
   <!-- ═══ THINKER PANEL ═══════════════════════════════════════════ -->
@@ -692,6 +831,58 @@ Example: 'When a captain says suspicious shipment, always ask what exactly is su
   </div>
 </div>
 
+<!-- WIPE CONFIRM MODAL -->
+<div class="modal-overlay" id="wipeModal" onclick="if(event.target===this)closeWipeModal()" style="display:none">
+  <div class="modal" style="max-width:520px">
+    <button class="modal-close" onclick="closeWipeModal()">✕</button>
+    <h3 style="color:#ef4444">⚠ Wipe Everything</h3>
+    <p style="font-size:13px;color:var(--muted);margin:8px 0 14px">
+      This will permanently delete <strong>all decisions</strong>, the <strong>stuck queue</strong>,
+      and the <strong>processed-tickets log</strong>. ChromaDB knowledge (canonical SOPs, KT,
+      approved precedents, trainer Q&amp;A) will <em>not</em> be touched. This action is
+      not reversible.
+    </p>
+    <p style="font-size:13px;color:var(--text);margin-bottom:8px">
+      Type <code style="background:rgba(239,68,68,.15);color:#ef4444;padding:2px 6px;border-radius:4px">WIPE ALL DECISIONS</code> below to confirm:
+    </p>
+    <input type="text" id="wipeConfirmInput" placeholder="WIPE ALL DECISIONS"
+      style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:14px;font-family:ui-monospace,Menlo,Consolas,monospace;margin-bottom:12px"
+      oninput="document.getElementById('wipeConfirmBtn').disabled = this.value.trim() !== 'WIPE ALL DECISIONS'">
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn-view" onclick="closeWipeModal()" style="padding:8px 16px">Cancel</button>
+      <button id="wipeConfirmBtn" disabled onclick="confirmWipe()"
+        style="padding:8px 16px;background:#ef4444;color:white;border:none;border-radius:6px;font-weight:600;cursor:pointer;opacity:.4">
+        🗑 Wipe everything
+      </button>
+    </div>
+    <div id="wipeResult" style="margin-top:12px;font-size:12px"></div>
+  </div>
+</div>
+
+<!-- PROCESS TICKETS MODAL -->
+<div class="modal-overlay" id="processTicketsModal" onclick="if(event.target===this)closeProcessTicketsModal()" style="display:none">
+  <div class="modal" style="max-width:680px">
+    <button class="modal-close" onclick="closeProcessTicketsModal()">✕</button>
+    <h3>📥 Process Tickets</h3>
+    <p style="font-size:13px;color:var(--muted);margin:8px 0 12px">
+      Paste Kapture ticket IDs below — one per line or comma-separated. Each ticket
+      will be fetched live, processed through the brain pipeline, and saved to the
+      decision feed.
+    </p>
+    <textarea id="processTicketsInput" rows="6" placeholder="779607702065&#10;779450625342&#10;779370998763"
+      style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text);font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace;resize:vertical;margin-bottom:12px"></textarea>
+    <div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;flex-wrap:wrap">
+      <span id="processProgress" style="font-size:12px;color:var(--muted);margin-right:auto"></span>
+      <button class="btn-view" onclick="closeProcessTicketsModal()" style="padding:8px 16px">Cancel</button>
+      <button id="processSubmitBtn" onclick="submitProcessTickets()"
+        style="padding:8px 16px;background:var(--accent);color:white;border:none;border-radius:6px;font-weight:600;cursor:pointer">
+        ▶ Start processing
+      </button>
+    </div>
+    <div id="processResults" style="margin-top:14px;max-height:280px;overflow-y:auto;font-size:12px"></div>
+  </div>
+</div>
+
 <!-- THINKER MODAL -->
 <div class="think-overlay" id="thinkModal" onclick="if(event.target===this)closeThinkModal()">
   <div class="think-modal">
@@ -732,7 +923,234 @@ async function api(path, opts={}) {
 
 // ── LOAD ALL ─────────────────────────────────────────────────────
 async function loadAll() {
-  await Promise.all([loadMode(), loadStats(), loadDecisions(currentFilter), loadHealth()]);
+  await Promise.all([loadMode(), loadStats(), loadDecisions(currentFilter), loadHealth(), loadFlipRates()]);
+}
+
+// ── SCENARIO AUDIT ──────────────────────────────────────────────
+async function initScenarioAudit() {
+  const sel = document.getElementById('auditScenarioPicker');
+  if (sel && sel.options.length <= 1) {
+    const scenarios = await _loadScenariosOnce();
+    scenarios.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.scenario_id;
+      opt.textContent = `${s.scenario_id} — ${s.label || s.theme}`;
+      sel.appendChild(opt);
+    });
+  }
+  // Honor ?id=HS_1_1 on page load — preselect that scenario
+  const params = new URLSearchParams(window.location.search);
+  const preset = params.get('id');
+  if (preset && sel) {
+    sel.value = preset;
+    loadScenarioAudit(preset);
+  }
+}
+
+async function loadScenarioAudit(sid) {
+  const out = document.getElementById('auditContent');
+  const sum = document.getElementById('auditSummary');
+  if (!sid) {
+    out.innerHTML = '<div class="empty">Pick a scenario above.</div>';
+    sum.textContent = '';
+    return;
+  }
+  out.innerHTML = '<div class="loading">Loading scenario audit...</div>';
+  // Reflect selection in URL (no reload) for sharability
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set('id', sid);
+    window.history.replaceState(null, '', url.toString());
+  } catch (e) {}
+
+  let data;
+  try {
+    data = await api(`/scenario-audit/${encodeURIComponent(sid)}`);
+  } catch (e) {
+    out.innerHTML = `<div style="color:var(--red)">Failed to load: ${esc(e.message || String(e))}</div>`;
+    return;
+  }
+
+  const compat = (data.stage0_compatibilities || []).join(', ') || '(none)';
+  const flip = data.flip_stats;
+  const flipPct = flip ? (flip.flip_rate * 100).toFixed(1) + '%' : 'n/a';
+  sum.textContent = `Stage 0 families: ${compat} · Flip rate: ${flipPct} (${flip?flip.total:0} decisions)`;
+
+  // 1. SOP entry
+  let html = '<div style="display:grid;grid-template-columns:1fr;gap:18px">';
+  html += `<section style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px">
+    <h3 style="margin:0 0 8px 0;font-size:14px">📘 sop_structured.json entry</h3>`;
+  if (!data.found_in_sop) {
+    html += '<div style="color:var(--yellow)">This scenario_id is not defined in sop_structured.json. The agent can still output it (free text) but there is no structured rule for it.</div>';
+  } else {
+    html += `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Theme: <strong>${esc(data.theme?.problem_theme || '?')}</strong> · Queue: <strong>${esc(data.theme?.queue || '?')}</strong> · TAT: ${esc(String(data.theme?.tat_hours||'?'))}h</div>`;
+    html += `<pre style="font-size:11px;background:var(--bg);padding:10px;border-radius:6px;overflow-x:auto;border:1px solid var(--border);margin:0">${esc(JSON.stringify(data.sop_entry, null, 2))}</pre>`;
+  }
+  html += '</section>';
+
+  // 2. Stage 0 taxonomy mapping
+  html += `<section style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px">
+    <h3 style="margin:0 0 8px 0;font-size:14px">🧪 Stage 0 mapping (which loss_types this scenario answers)</h3>`;
+  if (!data.stage0_compatibilities || !data.stage0_compatibilities.length) {
+    html += '<div style="color:var(--muted)">No mapping in scenario_families.py — Rule 2 guardrail will not flag this scenario.</div>';
+  } else {
+    html += `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Compatible loss_types: <strong>${esc(data.stage0_compatibilities.join(', '))}</strong></div>`;
+    const tax = data.stage0_taxonomy || {};
+    if (Object.keys(tax).length) {
+      html += '<div style="display:grid;gap:8px">';
+      for (const [qkey, lt_map] of Object.entries(tax)) {
+        for (const [lt, entry] of Object.entries(lt_map)) {
+          html += `<details style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px">
+            <summary style="font-size:12px;cursor:pointer"><strong>${esc(qkey)}</strong> / ${esc(lt)}</summary>
+            <pre style="font-size:11px;margin:6px 0 0 0;white-space:pre-wrap">${esc(JSON.stringify(entry, null, 2))}</pre>
+          </details>`;
+        }
+      }
+      html += '</div>';
+    }
+  }
+  html += '</section>';
+
+  // 3. ChromaDB chunks
+  const chunksByType = data.chunks_by_type || {};
+  const totalChunks = data.chunk_count || 0;
+  html += `<section style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px">
+    <h3 style="margin:0 0 8px 0;font-size:14px">📚 ChromaDB knowledge mentioning ${esc(sid)} (${totalChunks} chunk${totalChunks===1?'':'s'})</h3>`;
+  if (totalChunks === 0) {
+    html += '<div style="color:var(--yellow)">No chunks reference this scenario by name. Retrieval will only match via embedding similarity — consider adding a canonical SOP section that names the scenario explicitly.</div>';
+  } else {
+    const TYPE_LABELS = {
+      sop_canonical:        'Canonical SOP',
+      resolved_precedent:   'Resolved Precedents',
+      trainer_qa:           'Trainer Q&A',
+      kt_addition:          'KT Additions',
+      kt_domain_activation: 'KT Domain Activations',
+    };
+    for (const [ctype, chunks] of Object.entries(chunksByType)) {
+      const label = TYPE_LABELS[ctype] || ctype;
+      html += `<div style="margin-bottom:12px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${esc(label)} (${chunks.length})</div>`;
+      chunks.forEach(c => {
+        const dep = c.deprecated;
+        const styleExtra = dep ? 'opacity:.45;text-decoration:line-through' : '';
+        html += `<div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid ${dep?'var(--red)':'var(--accent)'};border-radius:6px;padding:10px;margin-bottom:6px;${styleExtra}">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px">
+            <div style="font-size:11px;color:var(--muted)">
+              <code>${esc(c.id)}</code> · source=${esc(c.source)}
+              ${c.section_path ? ' · ' + esc(c.section_path) : ''}
+              ${c.queue ? ' · queue=' + esc(c.queue) : ''}
+            </div>
+            <button onclick="toggleDeprecate('${esc(c.id)}', ${!dep}, '${esc(sid)}')"
+              style="font-size:10px;padding:3px 8px;background:${dep?'var(--green)':'transparent'};color:${dep?'var(--bg)':'var(--muted)'};border:1px solid ${dep?'var(--green)':'var(--border)'};border-radius:4px;cursor:pointer">
+              ${dep ? '↻ Undeprecate' : '⚠ Mark stale'}
+            </button>
+          </div>
+          <div style="font-size:12px;white-space:pre-wrap">${esc(c.text)}</div>
+        </div>`;
+      });
+      html += '</div>';
+    }
+  }
+  html += '</section>';
+
+  // 4. Recent decisions
+  const recent = data.recent_decisions || [];
+  html += `<section style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px">
+    <h3 style="margin:0 0 8px 0;font-size:14px">📊 Last ${recent.length} decisions with scenario=${esc(sid)}</h3>`;
+  if (!recent.length) {
+    html += '<div class="empty">No decisions yet for this scenario.</div>';
+  } else {
+    html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <tr style="text-align:left;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-size:11px;border-bottom:1px solid var(--border)">
+        <th style="padding:6px 8px">Ticket</th>
+        <th style="padding:6px 8px">Action</th>
+        <th style="padding:6px 8px">Conf</th>
+        <th style="padding:6px 8px">Review</th>
+        <th style="padding:6px 8px">Guardrail</th>
+        <th style="padding:6px 8px">Reviewer correction</th>
+        <th style="padding:6px 8px">When</th>
+      </tr>`;
+    recent.forEach(d => {
+      const corrected = d.reviewer_corrected_scenario
+        ? `→ ${esc(d.reviewer_corrected_scenario)}${d.reviewer_corrected_action?' / '+esc(d.reviewer_corrected_action):''}`
+        : '';
+      const status = d.review_status || '';
+      const statusColor = status === 'approved' ? 'var(--green)'
+                        : status === 'rejected' ? 'var(--red)'
+                        : status === 'sent'     ? 'var(--accent)'
+                        : 'var(--muted)';
+      html += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 8px"><code>${esc(d.ticket_id||'')}</code></td>
+        <td style="padding:6px 8px">${esc(d.action||'')}</td>
+        <td style="padding:6px 8px">${d.confidence!=null?Number(d.confidence).toFixed(1):''}</td>
+        <td style="padding:6px 8px;color:${statusColor}">${esc(status)}</td>
+        <td style="padding:6px 8px;color:var(--yellow);font-size:11px">${esc(d.guardrail_triggered||'')}</td>
+        <td style="padding:6px 8px;color:var(--red)">${corrected}</td>
+        <td style="padding:6px 8px;color:var(--muted);font-size:11px">${esc((d.created_at||'').slice(0,16).replace('T',' '))}</td>
+      </tr>`;
+    });
+    html += '</table></div>';
+  }
+  html += '</section>';
+
+  html += '</div>';
+  out.innerHTML = html;
+}
+
+async function toggleDeprecate(chunkId, deprecated, sid) {
+  try {
+    await api(`/chunks/${encodeURIComponent(chunkId)}/deprecate`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({deprecated})
+    });
+    loadScenarioAudit(sid);  // refresh to reflect new state
+  } catch (e) {
+    alert('Deprecate toggle failed: ' + (e.message || String(e)));
+  }
+}
+
+async function loadFlipRates() {
+  const el = document.getElementById('flipRatesContent');
+  if (!el) return;
+  try {
+    const r = await api('/stats/flip-rates');
+    const rows = r.flip_rates || [];
+    if (!rows.length) {
+      el.innerHTML = '<div class="empty">No decisions yet. As tickets are reviewed, flip rates will populate here.</div>';
+      return;
+    }
+    const header = `<tr style="text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">
+      <th style="padding:6px 8px">Scenario</th>
+      <th style="padding:6px 8px;text-align:right">Total</th>
+      <th style="padding:6px 8px;text-align:right">Approved</th>
+      <th style="padding:6px 8px;text-align:right">Auto-sent</th>
+      <th style="padding:6px 8px;text-align:right">Rejected</th>
+      <th style="padding:6px 8px;text-align:right">Corrected</th>
+      <th style="padding:6px 8px;text-align:right">Flip rate</th>
+      <th style="padding:6px 8px;text-align:right">Confidence</th>
+    </tr>`;
+    const body = rows.map(r => {
+      const meaningful = r.total >= 50;
+      const flipPct = (r.flip_rate * 100).toFixed(1) + '%';
+      const flipColor = r.flip_rate >= 0.20 ? 'var(--red)'
+                      : r.flip_rate >= 0.10 ? 'var(--yellow)'
+                      : 'var(--green)';
+      return `<tr style="font-size:12px;border-bottom:1px solid var(--border);${meaningful?'':'opacity:.55'}">
+        <td style="padding:6px 8px;font-weight:600">${esc(r.scenario)}</td>
+        <td style="padding:6px 8px;text-align:right">${r.total}</td>
+        <td style="padding:6px 8px;text-align:right;color:var(--green)">${r.approved}</td>
+        <td style="padding:6px 8px;text-align:right;color:var(--muted)">${r.auto_sent}</td>
+        <td style="padding:6px 8px;text-align:right;color:var(--yellow)">${r.rejected}</td>
+        <td style="padding:6px 8px;text-align:right">${r.rejected_with_correction}</td>
+        <td style="padding:6px 8px;text-align:right;color:${flipColor};font-weight:600">${flipPct}</td>
+        <td style="padding:6px 8px;text-align:right;color:var(--muted);font-size:11px">${meaningful?'Meaningful':`Need ${Math.max(0, 50-r.total)} more`}</td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">${header}${body}</table></div>`;
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--red);font-size:12px">Flip-rate load failed: ${esc(e.message||String(e))}</div>`;
+  }
 }
 
 async function loadHealth() {
@@ -1019,9 +1437,24 @@ function viewDecision(id) {
           <label>Reviewer Note (optional)</label>
           <textarea id="reviewNote" placeholder="Add a note..."></textarea>
         </div>
+        <div class="modal-section" id="rejectCorrectionWrap" style="display:none;border-top:1px dashed var(--border);padding-top:10px;margin-top:6px">
+          <label style="font-size:11px;color:var(--muted);letter-spacing:.5px">CORRECTION (optional — helps tune the agent)</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+            <select id="correctedScenario" style="flex:1;min-width:160px;padding:6px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px">
+              <option value="">— Correct scenario (optional) —</option>
+            </select>
+            <select id="correctedAction" style="flex:1;min-width:140px;padding:6px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:12px">
+              <option value="">— Correct action (optional) —</option>
+              <option value="respond">respond</option>
+              <option value="escalate">escalate</option>
+              <option value="needs_info">needs_info</option>
+              <option value="stuck">stuck</option>
+            </select>
+          </div>
+        </div>
         <div class="modal-actions">
           <button class="btn-approve" onclick="approveDecision(${d.id}, true)">Approve & Send</button>
-          <button class="btn-reject"  onclick="rejectDecision(${d.id}, true)">Reject</button>
+          <button class="btn-reject"  onclick="showRejectCorrection(${d.id})">Reject</button>
           ${d.action === 'respond' && d.response_draft ? `<button class="btn-view" style="margin-left:auto" onclick="sendReply(${d.id})">📤 Send to Kapture</button>` : ''}
           ${d.action === 'stuck' || d.action === 'needs_info' ? `<button class="btn-view" style="margin-left:auto" onclick="reprocessDecision(${d.id})">🔄 Reprocess with new SOPs</button>` : ''}
         </div>`;
@@ -1047,6 +1480,103 @@ function closeModal() {
   currentDecisionId = null;
 }
 
+// ── ADMIN: WIPE EVERYTHING ───────────────────────────────────────
+function openWipeModal() {
+  document.getElementById('wipeConfirmInput').value = '';
+  document.getElementById('wipeConfirmBtn').disabled = true;
+  document.getElementById('wipeConfirmBtn').style.opacity = '.4';
+  document.getElementById('wipeResult').innerHTML = '';
+  document.getElementById('wipeModal').style.display = 'flex';
+}
+function closeWipeModal() {
+  document.getElementById('wipeModal').style.display = 'none';
+}
+async function confirmWipe() {
+  const phrase = document.getElementById('wipeConfirmInput').value.trim();
+  const btn = document.getElementById('wipeConfirmBtn');
+  const res = document.getElementById('wipeResult');
+  btn.disabled = true; btn.textContent = '⏳ Wiping…';
+  try {
+    const r = await api('/admin/wipe', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({confirm: phrase}),
+    });
+    if (r.status === 'ok') {
+      const s = r.summary || {};
+      res.innerHTML = `<div style="color:var(--green)">✓ Wiped — ${s.decisions_deleted||0} decisions, ${s.stuck_queue_cleared||0} stuck entries, ${s.live_processed_cleared||0} processed marks cleared.</div>`;
+      setTimeout(() => { closeWipeModal(); loadAll(); }, 1400);
+    } else {
+      res.innerHTML = `<div style="color:var(--red)">${esc(JSON.stringify(r))}</div>`;
+    }
+  } catch (e) {
+    res.innerHTML = `<div style="color:var(--red)">Wipe failed: ${esc(e.message || String(e))}</div>`;
+  } finally {
+    btn.textContent = '🗑 Wipe everything';
+  }
+}
+
+// ── ADMIN: PROCESS TICKETS (bulk) ────────────────────────────────
+function openProcessTicketsModal() {
+  document.getElementById('processTicketsInput').value = '';
+  document.getElementById('processResults').innerHTML = '';
+  document.getElementById('processProgress').textContent = '';
+  document.getElementById('processSubmitBtn').disabled = false;
+  document.getElementById('processTicketsModal').style.display = 'flex';
+}
+function closeProcessTicketsModal() {
+  document.getElementById('processTicketsModal').style.display = 'none';
+}
+async function submitProcessTickets() {
+  const raw = document.getElementById('processTicketsInput').value.trim();
+  if (!raw) return;
+  const ids = raw.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+  if (!ids.length) return;
+  const btn = document.getElementById('processSubmitBtn');
+  const out = document.getElementById('processResults');
+  const prog = document.getElementById('processProgress');
+  btn.disabled = true;
+  out.innerHTML = '';
+  let done = 0, failed = 0;
+  for (const tid of ids) {
+    prog.textContent = `${done+failed+1}/${ids.length} · processing ${tid}…`;
+    const row = document.createElement('div');
+    row.style.cssText = 'padding:6px 10px;margin-bottom:4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;display:flex;align-items:center;gap:8px';
+    row.innerHTML = `<span style="color:var(--muted)">${esc(tid)}</span><span style="color:var(--accent)">⏳ fetching…</span>`;
+    out.prepend(row);
+    try {
+      const r = await api('/ticket/fetch-live', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ticket_id: tid}),
+      });
+      if (r.decision) {
+        const d = r.decision;
+        const actColor = d.action === 'respond' ? 'var(--green)'
+                       : d.action === 'escalate' ? 'var(--yellow)' : 'var(--red)';
+        row.innerHTML = `<span style="font-weight:600">${esc(tid)}</span>
+          <span style="color:${actColor}">${esc(d.action || '?')}</span>
+          <span style="color:var(--muted);font-size:11px">${esc(d.scenario || '')}</span>
+          <span style="color:var(--muted);font-size:11px;margin-left:auto">conf ${d.confidence || 0}/10</span>`;
+        done++;
+      } else if (r.status === 'queued' || r.job_id) {
+        row.innerHTML = `<span style="font-weight:600">${esc(tid)}</span><span style="color:var(--accent)">⏳ live-fetching (background job ${esc(r.job_id||'?')})</span>`;
+        done++;
+      } else {
+        row.innerHTML = `<span style="font-weight:600">${esc(tid)}</span><span style="color:var(--red)">${esc(JSON.stringify(r).slice(0,80))}</span>`;
+        failed++;
+      }
+    } catch (e) {
+      row.innerHTML = `<span style="font-weight:600">${esc(tid)}</span><span style="color:var(--red)">✗ ${esc(e.message || String(e))}</span>`;
+      failed++;
+    }
+  }
+  prog.textContent = `Done: ${done} succeeded, ${failed} failed.`;
+  btn.disabled = false;
+  // Refresh the dashboard once
+  loadAll();
+}
+
 // ── APPROVE / REJECT ─────────────────────────────────────────────
 async function approveDecision(id, fromModal=false) {
   const note = fromModal ? (document.getElementById('reviewNote')?.value || '') : '';
@@ -1059,12 +1589,56 @@ async function approveDecision(id, fromModal=false) {
   loadAll();
 }
 
+// Cached scenario list for the reject correction dropdown
+let _scenarioCache = null;
+
+async function _loadScenariosOnce() {
+  if (_scenarioCache) return _scenarioCache;
+  try {
+    const r = await api('/scenarios');
+    _scenarioCache = r.scenarios || [];
+  } catch (e) {
+    _scenarioCache = [];
+  }
+  return _scenarioCache;
+}
+
+// First click on Reject: reveal correction dropdowns and re-bind the button
+// to actually submit. Second click submits with the optional corrections.
+async function showRejectCorrection(id) {
+  const wrap = document.getElementById('rejectCorrectionWrap');
+  const btn  = document.querySelector('.modal-actions .btn-reject');
+  if (!wrap) { rejectDecision(id, true); return; }
+  if (wrap.style.display === 'none') {
+    wrap.style.display = 'block';
+    if (btn) {
+      btn.textContent = 'Confirm Reject';
+      btn.setAttribute('onclick', `rejectDecision(${id}, true)`);
+    }
+    // Populate scenario dropdown (lazy — only when reviewer actually rejects)
+    const scenarios = await _loadScenariosOnce();
+    const sel = document.getElementById('correctedScenario');
+    if (sel && sel.options.length <= 1) {
+      scenarios.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.scenario_id;
+        opt.textContent = `${s.scenario_id} — ${s.label || s.theme}`;
+        sel.appendChild(opt);
+      });
+    }
+  } else {
+    rejectDecision(id, true);
+  }
+}
+
 async function rejectDecision(id, fromModal=false) {
   const note = fromModal ? (document.getElementById('reviewNote')?.value || '') : '';
+  const corrected_scenario = fromModal ? (document.getElementById('correctedScenario')?.value || '') : '';
+  const corrected_action   = fromModal ? (document.getElementById('correctedAction')?.value   || '') : '';
   await api(`/decisions/${id}/reject`, {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({note})
+    body: JSON.stringify({note, corrected_scenario, corrected_action})
   });
   if (fromModal) closeModal();
   loadAll();
@@ -1111,222 +1685,10 @@ function switchTab(name, btn) {
   document.getElementById('panel-' + name).classList.add('active');
   if (name === 'kt')      { loadKTList(); loadDomainQueues(); }
   if (name === 'stuck')   loadStuckQueue();
-  if (name === 'cxo')     loadCXO();
   if (name === 'health')  loadHealth();
   if (name === 'thinker') loadThinker();
 }
 
-
-// ── CXO VIEW ─────────────────────────────────────────────────────
-async function loadCXO() {
-  const el = document.getElementById('cxoContent');
-  el.innerHTML = '<div class="loading">Fetching CXO metrics...</div>';
-  const m = await api('/cxo');
-  el.innerHTML = renderCXO(m);
-}
-
-function gradeColor(grade, target) {
-  if (grade === null || grade === undefined) return 'c-muted';
-  if (grade >= target) return 'c-green';
-  if (grade >= target - 0.5) return 'c-yellow';
-  return 'c-red';
-}
-
-function rateColor(rate, target, lowerIsBetter=true) {
-  if (lowerIsBetter) {
-    if (rate <= target * 0.7) return 'c-green';
-    if (rate <= target) return 'c-yellow';
-    return 'c-red';
-  } else {
-    if (rate >= target) return 'c-green';
-    if (rate >= target * 0.7) return 'c-yellow';
-    return 'c-red';
-  }
-}
-
-function krPill(rate, target, lowerIsBetter=true) {
-  const ok = lowerIsBetter ? rate <= target : rate >= target;
-  const warn = lowerIsBetter ? rate <= target * 1.3 : rate >= target * 0.7;
-  const cls = ok ? 'kr-pill-pass' : (warn ? 'kr-pill-warn' : 'kr-pill-fail');
-  const label = ok ? '✓ ON TARGET' : (warn ? '⚠ WATCH' : '✗ BREACH');
-  return `<span class="kr-pill ${cls}">${label}</span>`;
-}
-
-function gradeBar(grade, max=5) {
-  if (grade === null || grade === undefined) return '';
-  const pct = Math.min(grade / max * 100, 100);
-  const col = grade >= 3.5 ? '#22c55e' : grade >= 2.5 ? '#f59e0b' : '#ef4444';
-  return `<div class="grade-bar-wrap"><div class="grade-bar">
-    <div class="grade-bar-fill" style="width:${pct}%;background:${col}"></div>
-  </div></div>`;
-}
-
-function artFmt(mins) {
-  if (!mins) return '—';
-  if (mins < 60) return mins.toFixed(0) + ' min';
-  return (mins / 60).toFixed(1) + ' hr';
-}
-
-function renderCXO(m) {
-  const noData = m.total_processed === 0;
-  const resGrade    = m.resolution_grade;
-  const revGrade    = m.reversal_grade;
-  const nonRevGrade = m.non_reversal_grade;
-
-  // ── Grades section ──────────────────────────────────────────────
-  const gradesHtml = `
-  <div class="cxo-section">
-    <div class="cxo-section-title">Resolution Quality — Permutation Simulation Grade</div>
-    <div class="cxo-grades">
-      <div class="grade-card primary">
-        <div class="grade-label">Overall Resolution Grade</div>
-        <div class="grade-value ${gradeColor(resGrade, m.kr_resolution_target)}">${resGrade !== null ? resGrade : '—'}<span class="grade-denom">/5</span></div>
-        ${gradeBar(resGrade)}
-        <div class="grade-target ${gradeColor(resGrade, m.kr_resolution_target)}">
-          KR Target: ≥${m.kr_resolution_target}/5 &nbsp;${resGrade !== null ? krPill(resGrade, m.kr_resolution_target, false) : ''}
-        </div>
-        <div class="grade-bench">Benchmark: ${m.benchmark_grade}/5 all · ${m.benchmark_grade_nosop}/5 excl. no-SOP</div>
-      </div>
-
-      <div class="grade-card">
-        <div class="grade-label">Reversal Grade <span style="font-size:10px;color:var(--muted)">(W-LD / Loss tickets)</span></div>
-        <div class="grade-value ${gradeColor(revGrade, m.kr_reversal_target)}">${revGrade !== null ? revGrade : '—'}<span class="grade-denom">/5</span></div>
-        ${gradeBar(revGrade)}
-        <div class="grade-target ${gradeColor(revGrade, m.kr_reversal_target)}">
-          KR Target: ≥${m.kr_reversal_target}/5 &nbsp;${revGrade !== null ? krPill(revGrade, m.kr_reversal_target, false) : ''}
-        </div>
-        <div class="grade-bench">${m.reversal_count} reversal tickets processed</div>
-      </div>
-
-      <div class="grade-card">
-        <div class="grade-label">Non-Reversal Grade <span style="font-size:10px;color:var(--muted)">(Other queues)</span></div>
-        <div class="grade-value ${gradeColor(nonRevGrade, 3.0)}">${nonRevGrade !== null ? nonRevGrade : '—'}<span class="grade-denom">/5</span></div>
-        ${gradeBar(nonRevGrade)}
-        <div class="grade-target ${gradeColor(nonRevGrade, 3.0)}">
-          KR Target: ≥3.0/5 &nbsp;${nonRevGrade !== null ? krPill(nonRevGrade, 3.0, false) : ''}
-        </div>
-        <div class="grade-bench">${m.non_reversal_count} non-reversal tickets processed</div>
-      </div>
-    </div>
-  </div>`;
-
-  // ── KR Rates ────────────────────────────────────────────────────
-  const krHtml = `
-  <div class="cxo-section">
-    <div class="cxo-section-title">Key Result Thresholds</div>
-    <div class="kr-grid">
-      <div class="kr-card">
-        <div class="kr-name">C4 Rate (Unresolved)</div>
-        <div class="kr-val ${rateColor(m.c4_rate, m.kr_c4_target)}">${m.c4_rate}%</div>
-        <div class="kr-tgt">Target: &lt;${m.kr_c4_target}% &nbsp; ${krPill(m.c4_rate, m.kr_c4_target)}</div>
-      </div>
-      <div class="kr-card">
-        <div class="kr-name">System Fail Rate</div>
-        <div class="kr-val ${rateColor(m.system_fail_rate, m.kr_sysfail_target)}">${m.system_fail_rate}%</div>
-        <div class="kr-tgt">Target: &lt;${m.kr_sysfail_target}% &nbsp; ${krPill(m.system_fail_rate, m.kr_sysfail_target)}</div>
-      </div>
-      <div class="kr-card">
-        <div class="kr-name">Reopen Rate</div>
-        <div class="kr-val ${rateColor(m.reopen_rate, m.kr_reopen_target)}">${m.reopen_rate}%</div>
-        <div class="kr-tgt">Target: &lt;${m.kr_reopen_target}% &nbsp; ${krPill(m.reopen_rate, m.kr_reopen_target)}</div>
-      </div>
-      <div class="kr-card">
-        <div class="kr-name">Auto-Resolution Rate</div>
-        <div class="kr-val ${rateColor(m.auto_resolution_rate, 50, false)}">${m.auto_resolution_rate}%</div>
-        <div class="kr-tgt">Tickets resolved without human touch</div>
-      </div>
-      <div class="kr-card">
-        <div class="kr-name">TAT / SLA Compliance</div>
-        <div class="kr-val ${rateColor(m.sla_compliance, 85, false)}">${m.sla_compliance}%</div>
-        <div class="kr-tgt">Target: ≥85% &nbsp; ${krPill(m.sla_compliance, 85, false)}</div>
-      </div>
-      <div class="kr-card">
-        <div class="kr-name">Avg Resolution Time (ART)</div>
-        <div class="kr-val c-accent2">${artFmt(m.art_minutes)}</div>
-        <div class="kr-tgt">Ticket to resolved</div>
-      </div>
-      <div class="kr-card">
-        <div class="kr-name">Avg Confidence</div>
-        <div class="kr-val c-blue">${m.avg_confidence}<span style="font-size:14px;color:var(--muted)">/10</span></div>
-        <div class="kr-tgt">Agent certainty score</div>
-      </div>
-      <div class="kr-card">
-        <div class="kr-name">Total Processed</div>
-        <div class="kr-val c-accent">${m.total_processed}</div>
-        <div class="kr-tgt">${m.respond_count} respond · ${m.escalate_count} escalate · ${m.stuck_count + m.needs_info_count} stuck</div>
-      </div>
-    </div>
-  </div>`;
-
-  // ── P&L Financial ───────────────────────────────────────────────
-  const plHtml = `
-  <div class="cxo-section">
-    <div class="cxo-section-title">P&amp;L Impact — Cost Savings vs Human L1 Agents</div>
-    <div class="pl-grid">
-      <div class="pl-card highlight">
-        <div class="pl-label">Cost Saved (Cumulative)</div>
-        <div class="pl-value c-accent2">₹${m.cost_saved_inr.toLocaleString()}</div>
-        <div class="pl-sub">vs human L1 @ ₹15/ticket</div>
-      </div>
-      <div class="pl-card highlight">
-        <div class="pl-label">Monthly Savings Projection</div>
-        <div class="pl-value c-green">₹${m.monthly_saving_inr.toLocaleString()}</div>
-        <div class="pl-sub">~${m.monthly_ticket_projection.toLocaleString()} tickets/month</div>
-      </div>
-      <div class="pl-card">
-        <div class="pl-label">Headcount Equivalent</div>
-        <div class="pl-value c-accent">${m.headcount_equiv}</div>
-        <div class="pl-sub">human L1 agents replaced (~65 tickets/person/day)</div>
-      </div>
-      <div class="pl-card">
-        <div class="pl-label">Net Saving / Ticket</div>
-        <div class="pl-value c-yellow">₹${m.net_saving_per_ticket}</div>
-        <div class="pl-sub">Human ₹15 − Agent API ₹0.5</div>
-      </div>
-      <div class="pl-card">
-        <div class="pl-label">Annual Projection</div>
-        <div class="pl-value c-green">₹${(m.monthly_saving_inr * 12).toLocaleString()}</div>
-        <div class="pl-sub">at current run rate</div>
-      </div>
-    </div>
-  </div>`;
-
-  // ── SOP Sheet / Satisfaction ────────────────────────────────────
-  const sat = m.satisfaction;
-  let satHtml = '';
-  if (sat.available && sat.header && sat.header.length > 0) {
-    const visibleCols = sat.header.slice(0, 5);  // cap at 5 cols for readability
-    satHtml = `
-    <div class="cxo-section">
-      <div class="cxo-section-title">SOP Coverage &amp; Live Data (${sat.total_rows} rows)
-        <a class="cxo-csat-link" href="${sat.url}" target="_blank" style="margin-left:12px;">Open Sheet ↗</a>
-      </div>
-      <div class="cxo-csat">
-        <table>
-          <thead><tr>${visibleCols.map(h => `<th>${esc(h)}</th>`).join('')}${sat.header.length > 5 ? `<th style="color:var(--muted)">+${sat.header.length-5} more cols</th>` : ''}</tr></thead>
-          <tbody>${sat.rows.slice(0, 15).map(r => `
-            <tr>${visibleCols.map((_,i) => `<td>${esc((r[i]||'').substring(0,100))}</td>`).join('')}${sat.header.length > 5 ? '<td>…</td>' : ''}</tr>
-          `).join('')}</tbody>
-        </table>
-        ${sat.total_rows > 15 ? `<p style="font-size:11px;color:var(--muted);padding:8px 10px">Showing 15 of ${sat.total_rows} rows. <a class="cxo-csat-link" href="${sat.url}" target="_blank">View all ↗</a></p>` : ''}
-      </div>
-    </div>`;
-  } else {
-    satHtml = `
-    <div class="cxo-section">
-      <div class="cxo-section-title">Live Sheets Data</div>
-      <div class="cxo-csat" style="text-align:center;padding:32px">
-        <p style="color:var(--muted);margin-bottom:12px">Data from Google Sheets</p>
-        <a class="cxo-csat-link" href="${sat.url}" target="_blank">Open Sheet ↗</a>
-        ${sat.error ? `<p style="color:var(--red);font-size:11px;margin-top:8px">${esc(sat.error)}</p>` : ''}
-      </div>
-    </div>`;
-  }
-
-  return noData
-    ? `<div class="empty">No decisions processed yet. Run populate_dashboard.py to generate data.</div>`
-    : gradesHtml + krHtml + plHtml + satHtml;
-}
 
 // ── KT ENGINE ────────────────────────────────────────────────────
 // ── Speech-to-Text for KT Engine ─────────────────────────────────
@@ -1432,22 +1794,22 @@ async function submitKT() {
 async function loadDomainQueues() {
   try {
     const data = await api('/kt/queues');
-    const proseSel = document.getElementById('domainQueueKey');
-    const tplSel   = document.getElementById('domainTplQueue');
-    const status   = document.getElementById('domainQueueStatus');
+    const guidedSel = document.getElementById('guidedQueueKey');
+    const tplSel    = document.getElementById('domainTplQueue');
+    const status    = document.getElementById('domainQueueStatus');
     if (!data.queues) return;
 
-    // Prose-mode dropdown (preserves "auto-detect" option)
-    if (proseSel) {
-      const current = proseSel.value;
-      proseSel.innerHTML = '<option value="">— Auto-detect queue from text —</option>';
+    // Guided-mode dropdown (preserves "auto-detect" option)
+    if (guidedSel) {
+      const current = guidedSel.value;
+      guidedSel.innerHTML = '<option value="">— Auto-detect queue from your answers —</option>';
       data.queues.forEach(q => {
         const opt = document.createElement('option');
         opt.value = q.queue_key;
         opt.textContent = `${q.queue_key}  (${q.status})`;
-        proseSel.appendChild(opt);
+        guidedSel.appendChild(opt);
       });
-      proseSel.value = current;
+      guidedSel.value = current;
     }
 
     // JSON-mode dropdown (no auto-detect, real picker only)
@@ -1477,8 +1839,8 @@ async function loadDomainQueues() {
 }
 
 function switchKTMode(mode) {
-  document.getElementById('ktMode-json').style.display  = (mode === 'json')  ? 'block' : 'none';
-  document.getElementById('ktMode-prose').style.display = (mode === 'prose') ? 'block' : 'none';
+  document.getElementById('ktMode-guided').style.display = (mode === 'guided') ? 'block' : 'none';
+  document.getElementById('ktMode-json').style.display   = (mode === 'json')   ? 'block' : 'none';
   document.querySelectorAll('.ktmode-tab').forEach(t => {
     const active = t.dataset.mode === mode;
     t.style.borderBottomColor = active ? 'var(--accent)' : 'transparent';
@@ -1568,29 +1930,207 @@ async function submitDomainJSON() {
   }
 }
 
-async function submitDomainKT() {
-  const text = document.getElementById('domainText').value.trim();
-  if (!text) return;
-  const queue_hint = document.getElementById('domainQueueKey').value;
+// ── Guided KT (interview style) ─────────────────────────────────
+let _guidedParsed = null;   // last extracted JSON, used by Activate
+let _guidedRaw    = null;   // last raw answers (for archive)
+
+function _guidedReadFields() {
+  const aliases  = document.getElementById('guidedAliases').value.trim();
+  const issues   = document.getElementById('guidedIssues').value.trim();
+  const metabase = document.getElementById('guidedMetabase').value.trim();
+  const rules    = document.getElementById('guidedRules').value.trim();
+
+  // Append any inline gap-answers the user typed
+  const gapInputs = document.querySelectorAll('#guidedGaps .gap-answer');
+  let extras = {Issue_types: '', Metabase: '', Rules: '', Queue_identity: ''};
+  gapInputs.forEach(inp => {
+    const sec = (inp.dataset.section || '').replace(/\s+/g, '_');
+    const q   = inp.dataset.question || '';
+    const a   = inp.value.trim();
+    if (a) extras[sec] = (extras[sec] ? extras[sec] + '\n' : '') + `- ${q} → ${a}`;
+  });
+
+  return {
+    queue_hint: document.getElementById('guidedQueueKey').value || '',
+    queue_aliases_text: [aliases, extras.Queue_identity].filter(Boolean).join('\n'),
+    issue_types_text:   [issues,  extras.Issue_types].filter(Boolean).join('\n'),
+    metabase_text:      [metabase, extras.Metabase].filter(Boolean).join('\n'),
+    rules_text:         [rules,    extras.Rules].filter(Boolean).join('\n'),
+  };
+}
+
+async function guidedExtract(merge_gaps) {
+  const body = _guidedReadFields();
+  const total = (body.queue_aliases_text + body.issue_types_text + body.metabase_text + body.rules_text).trim();
+  if (!total) { alert('Fill at least one section first.'); return; }
+
+  const btn = document.getElementById('guidedExtractBtn');
+  const orig = btn.textContent;
+  btn.textContent = '⏳ Extracting...';
+  btn.disabled = true;
+
   try {
-    const r = await api('/kt/structured-from-text', {
+    const r = await api('/kt/guided-extract', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text, queue_hint})
+      body: JSON.stringify(body)
+    });
+    _guidedParsed = r.parsed;
+    _guidedRaw    = body;
+
+    // English summary
+    document.getElementById('guidedSummary').textContent = r.english_summary || '(no summary returned)';
+
+    // Validation block
+    const vBlock = document.getElementById('guidedValidationBlock');
+    let vHtml = '';
+    if (r.validation && r.validation.errors && r.validation.errors.length) {
+      vHtml += `<div style="color:var(--red);margin-bottom:4px"><strong>✗ ${r.validation.errors.length} validation error(s):</strong></div>`;
+      vHtml += '<ul style="margin:0 0 6px 18px;color:var(--red)">' + r.validation.errors.map(e => `<li>${esc(e)}</li>`).join('') + '</ul>';
+    }
+    if (r.validation && r.validation.warnings && r.validation.warnings.length) {
+      vHtml += `<div style="color:var(--yellow);margin-bottom:4px"><strong>⚠ ${r.validation.warnings.length} warning(s):</strong></div>`;
+      vHtml += '<ul style="margin:0 0 6px 18px;color:var(--yellow)">' + r.validation.warnings.map(w => `<li>${esc(w)}</li>`).join('') + '</ul>';
+    }
+    if (r.ready_to_activate) {
+      vHtml = `<div style="color:var(--green)"><strong>✓ Ready to activate.</strong> Review the summary above, then click Activate Queue.</div>` + vHtml;
+    }
+    vBlock.innerHTML = vHtml;
+
+    // Gaps block (specific follow-up questions)
+    const gapsWrap = document.getElementById('guidedGapsBlock');
+    const gapsEl   = document.getElementById('guidedGaps');
+    if (r.gaps && r.gaps.length) {
+      gapsEl.innerHTML = r.gaps.map(g => `
+        <div style="margin-bottom:10px;padding:8px 10px;background:var(--bg);border-left:3px solid var(--yellow);border-radius:4px">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:2px">${esc(g.section || 'Misc')}</div>
+          <div style="font-size:13px;margin-bottom:6px">${esc(g.question)}</div>
+          <input type="text" class="gap-answer" data-section="${esc(g.section || '')}" data-question="${esc(g.question)}"
+                 placeholder="Your answer..." style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--text);font-size:13px">
+        </div>
+      `).join('');
+      gapsWrap.style.display = 'block';
+    } else {
+      gapsEl.innerHTML = '';
+      gapsWrap.style.display = 'none';
+    }
+
+    // JSON preview
+    document.getElementById('guidedJsonPreview').textContent = JSON.stringify(r.parsed, null, 2);
+
+    // Show result + enable activate
+    document.getElementById('guidedResult').style.display = 'block';
+    const actBtn = document.getElementById('guidedActivateBtn');
+    actBtn.disabled = !r.ready_to_activate;
+    actBtn.style.opacity = r.ready_to_activate ? '1' : '.5';
+  } catch (e) {
+    alert('Extract failed: ' + (e.message || e));
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
+}
+
+async function guidedTest() {
+  if (!_guidedParsed) { alert('Run Extract first'); return; }
+  const idsRaw = document.getElementById('guidedTestIds').value.trim();
+  const n      = parseInt(document.getElementById('guidedTestN').value || '3', 10);
+  const ticket_ids = idsRaw ? idsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const auto_pick  = ticket_ids.length ? 0 : n;
+
+  const btn = document.getElementById('guidedTestBtn');
+  const out = document.getElementById('guidedTestResults');
+  const orig = btn.textContent;
+  btn.textContent = '⏳ Running...';
+  btn.disabled = true;
+  out.innerHTML = '<div style="color:var(--muted);font-size:12px">Running tickets through staged knowledge — this calls Gemini per ticket, can take 10-20s...</div>';
+
+  try {
+    const r = await api('/kt/guided-test', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({parsed: _guidedParsed, ticket_ids, auto_pick})
+    });
+    if (r.warning) {
+      out.innerHTML = `<div style="color:var(--yellow);font-size:12px">⚠ ${esc(r.warning)}</div>`;
+      return;
+    }
+    if (!r.results || !r.results.length) {
+      out.innerHTML = '<div class="empty">No results returned.</div>';
+      return;
+    }
+    out.innerHTML = r.results.map(res => {
+      if (res.error) {
+        return `<div style="border:1px solid var(--red);border-radius:6px;padding:10px;margin-bottom:8px;background:var(--bg)">
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px">Ticket ${esc(res.ticket_id)}</div>
+          <div style="color:var(--red);font-size:12px">✗ ${esc(res.error)}</div>
+        </div>`;
+      }
+      const actColor = res.action === 'respond' ? 'var(--green)'
+                     : res.action === 'escalate' ? 'var(--yellow)'
+                     : 'var(--red)';
+      const s0 = res.stage0 || {};
+      let body = '';
+      if (res.action === 'respond' && res.response) {
+        body = `<div style="font-size:12px;margin-top:6px"><strong>Reply:</strong> <span style="color:var(--muted)">${esc(res.response.slice(0, 350))}${res.response.length>350?'…':''}</span></div>`;
+      } else if (res.action === 'escalate') {
+        body = `<div style="font-size:12px;margin-top:6px"><strong>Escalate to:</strong> ${esc(res.escalation_queue)} — <span style="color:var(--muted)">${esc(res.escalation_reason)}</span></div>`;
+      } else if (res.stuck_question) {
+        body = `<div style="font-size:12px;margin-top:6px"><strong>Stuck:</strong> <span style="color:var(--muted)">${esc(res.stuck_question)}</span></div>`;
+      }
+      return `<div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px;background:var(--bg)">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:6px">
+          <div>
+            <div style="font-size:13px;font-weight:600">Ticket ${esc(res.ticket_id)}</div>
+            <div style="font-size:11px;color:var(--muted)">${esc(res.queue || '')} · ${esc((res.subject||'').slice(0,80))}</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span style="font-size:11px;color:${actColor};font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid ${actColor}55;background:${actColor}15">${esc(res.action.toUpperCase())}</span>
+            <span style="font-size:11px;color:var(--muted)">${res.confidence}/10</span>
+          </div>
+        </div>
+        ${s0.physical_event ? `<div style="font-size:11px;color:var(--muted);margin-bottom:4px"><strong>Stage 0:</strong> ${esc(s0.physical_event)} ${s0.loss_type?` <span style="color:var(--accent)">[${esc(s0.loss_type)}]</span>`:''} ${s0.scenario_hint?` → ${esc(s0.scenario_hint)}`:''}</div>` : ''}
+        <div style="font-size:12px;margin-bottom:2px"><strong>Scenario:</strong> ${esc(res.scenario || '—')}</div>
+        ${body}
+        ${res.reasoning ? `<details style="margin-top:6px"><summary style="font-size:11px;color:var(--muted);cursor:pointer">Reasoning</summary><div style="font-size:11px;color:var(--muted);margin-top:4px;white-space:pre-wrap">${esc(res.reasoning)}</div></details>` : ''}
+      </div>`;
+    }).join('');
+  } catch (e) {
+    out.innerHTML = `<div style="color:var(--red);font-size:12px">Test run failed: ${esc(e.message || String(e))}</div>`;
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
+}
+
+async function guidedActivate() {
+  if (!_guidedParsed) { alert('Run Extract first'); return; }
+  const btn = document.getElementById('guidedActivateBtn');
+  const orig = btn.textContent;
+  btn.textContent = '⏳ Activating...';
+  btn.disabled = true;
+  try {
+    const r = await api('/kt/guided-activate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({parsed: _guidedParsed, raw_answers: _guidedRaw || {}})
     });
     if (r.status === 'ok') {
-      document.getElementById('domainText').value = '';
-      const ok = document.getElementById('domainSuccess');
-      ok.textContent = `${r.parsed.queue_key} activated!`;
+      const ok = document.getElementById('guidedSuccess');
+      ok.textContent = `✓ ${r.queue_key} activated`;
+      ok.style.color = 'var(--green)';
       ok.style.display = 'inline';
-      setTimeout(() => ok.style.display = 'none', 4000);
+      setTimeout(() => ok.style.display = 'none', 6000);
       loadDomainQueues();
       loadKTList();
     } else {
       alert('Failed: ' + JSON.stringify(r));
     }
   } catch (e) {
-    alert('Failed: ' + (e.message || e));
+    alert('Activate failed: ' + (e.message || e));
+  } finally {
+    btn.textContent = orig;
+    btn.disabled = false;
   }
 }
 
@@ -1612,7 +2152,89 @@ async function loadKTList() {
 }
 
 // ── STUCK QUEUE ──────────────────────────────────────────────────
+async function loadStuckClusters(forceRefresh=false) {
+  const out  = document.getElementById('stuckClustersContent');
+  const meta = document.getElementById('clustersMeta');
+  if (!out) return;
+  if (forceRefresh) out.innerHTML = '<div class="loading">Recomputing clusters…</div>';
+  let data;
+  try {
+    data = await api('/stuck/clusters' + (forceRefresh ? '?refresh=true' : ''));
+  } catch (e) {
+    out.innerHTML = `<div style="color:var(--red);font-size:12px">Cluster load failed: ${esc(e.message||String(e))}</div>`;
+    return;
+  }
+  const clusters = (data.clusters || []).slice(0, 10);
+  const cached = data._from_cache;
+  const ageMin = Math.round((data._cache_age_seconds || 0) / 60);
+  meta.textContent = `${data.total_entries||0} unanswered Qs · ${data.cluster_count||0} clusters · method=${data.method||'?'}` +
+                     (cached ? ` · cached ${ageMin}m ago` : ` · fresh`);
+  if (!clusters.length) {
+    out.innerHTML = '<div class="empty">No unanswered stuck questions in the last 30 days.</div>';
+    return;
+  }
+  out.innerHTML = clusters.map((c, i) => {
+    const tickets = (c.sample_ticket_ids || []).map(t => `<code>${esc(t||'?')}</code>`).join(' ');
+    const queueBadge = c.suggested_queue
+      ? `<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(99,102,241,.15);color:#a5b4fc;margin-left:6px">${esc(c.suggested_queue)}</span>`
+      : '';
+    return `<div style="background:var(--bg);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:6px;padding:12px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <div style="flex:1;min-width:280px">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">
+            Cluster #${i+1} · ${c.cluster_size} question${c.cluster_size===1?'':'s'} ${queueBadge}
+          </div>
+          <div style="font-size:13px;font-weight:600;line-height:1.4">${esc(c.representative_question)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">Sample tickets: ${tickets}</div>
+        </div>
+        <button class="btn-view" onclick="openClusterInKT(${i})" style="font-size:11px;padding:6px 12px;white-space:nowrap">📘 Open in KT Engine</button>
+      </div>
+    </div>`;
+  }).join('');
+  // Stash clusters for the handoff button
+  window._lastClusters = clusters;
+}
+
+function openClusterInKT(idx) {
+  const c = (window._lastClusters || [])[idx];
+  if (!c) return;
+  // Switch to KT tab, set the queue picker if known, prefill the rules field
+  // with the cluster's representative question as context.
+  const ktTab = Array.from(document.querySelectorAll('.page-tab')).find(b => b.textContent.includes('KT Engine'));
+  if (ktTab) ktTab.click();
+
+  // Defer prefill so the panel is rendered
+  setTimeout(() => {
+    if (typeof switchKTMode === 'function') switchKTMode('guided');
+    const qSel = document.getElementById('guidedQueueKey');
+    if (qSel && c.suggested_queue) {
+      // Match by alias substring — guidedQueueKey is populated with queue_keys
+      for (const opt of qSel.options) {
+        if (opt.value && (opt.value === c.suggested_queue ||
+            opt.value.includes(c.suggested_queue) ||
+            c.suggested_queue.includes(opt.value))) {
+          qSel.value = opt.value;
+          break;
+        }
+      }
+    }
+    const rules = document.getElementById('guidedRules');
+    if (rules) {
+      const prefix = rules.value.trim() ? rules.value.trim() + '\n\n' : '';
+      const sampleTickets = (c.sample_ticket_ids || []).filter(Boolean).join(', ');
+      rules.value = prefix +
+        `# Trainer-flagged gap (cluster of ${c.cluster_size} similar stuck questions):\n` +
+        `# Question: ${c.representative_question}\n` +
+        (sampleTickets ? `# Sample tickets: ${sampleTickets}\n` : '') +
+        `# TODO: codify the rule the agent should follow to handle these autonomously.`;
+      rules.focus();
+      rules.scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+  }, 100);
+}
+
 async function loadStuckQueue() {
+  loadStuckClusters();   // run alongside the individual list
   const data = await api('/stuck');
   const el = document.getElementById('stuckList');
   const badge = document.getElementById('stuckBadge');
@@ -2224,7 +2846,17 @@ async function playThinking(decisionId) {
     }
 
     const el = document.createElement('div');
-    el.className = `thinker-step ${cls}`;
+    // Add the "scanning" shimmer class for steps that look like data-reading
+    // (SOP retrieval, Metabase queries, OCR, attachment summary, etc.).
+    const labelLower = (s.label || '').toLowerCase();
+    const isScanning = (
+      labelLower.includes('searching sop') ||
+      labelLower.includes('metabase') ||
+      labelLower.includes('ocr') ||
+      labelLower.includes('reading ticket') ||
+      labelLower.includes('attachment')
+    );
+    el.className = `thinker-step ${cls}${isScanning ? ' scanning' : ''}`;
     const hasD = !!s.detail;
     el.innerHTML = `
       <div class="step-icon-wrap">${s.icon || '•'}</div>
@@ -2238,11 +2870,20 @@ async function playThinking(decisionId) {
     await _thinkerDelay(20);
     el.classList.add('visible');
 
-    // typewrite the detail
+    // typewrite the detail with a blinking cursor at the tail
     if (s.detail) {
       await _thinkerDelay(120);
       const detailEl = document.getElementById('step-detail-' + i);
-      if (detailEl) await _typewrite(detailEl, s.detail, 12);
+      if (detailEl) {
+        detailEl.classList.add('typing');
+        await _typewrite(detailEl, s.detail, 12);
+        detailEl.classList.remove('typing');
+      }
+    }
+
+    // Remove the scanning shimmer once the step is done (avoid forever-sweep)
+    if (isScanning && !isThinking) {
+      setTimeout(() => el.classList.remove('scanning'), 800);
     }
 
     // Populate hidden full-detail for click-to-expand (after typewrite completes)

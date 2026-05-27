@@ -39,13 +39,17 @@ STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # ── Mode state (in-memory; survives restarts via .env) ────────────
-_mode_file = Path(__file__).parent / "data" / ".mode"
+# Mode persistence delegates to src.api.mode (single source of truth — agent_brain
+# and live_agent both read from there). The dashboard JS contract is unchanged:
+# {"autonomous": bool} on the wire; canonical module stores the string form.
+from src.api.mode import get_mode as _get_mode_str, set_mode as _set_mode_str
+
 def _load_mode() -> bool:
-    try: return _mode_file.read_text().strip() == "autonomous"
-    except: return False
+    return _get_mode_str() == "autonomous"
+
 def _save_mode(autonomous: bool):
-    _mode_file.parent.mkdir(parents=True, exist_ok=True)
-    _mode_file.write_text("autonomous" if autonomous else "review")
+    _set_mode_str("autonomous" if autonomous else "review")
+    print(f"[Mode] dashboard toggle -> {'autonomous' if autonomous else 'review'}")
 
 # ── Routes ────────────────────────────────────────────────────────
 
@@ -82,6 +86,8 @@ def decisions(filter: str = "", limit: int = 100, offset: int = 0):
 
 class ReviewAction(BaseModel):
     note: str = ""
+    corrected_scenario: str = ""   # optional — what reviewer thinks the scenario should have been
+    corrected_action: str = ""     # optional — what reviewer thinks the action should have been
 
 @app.get("/api/decisions/{decision_id}")
 def get_decision(decision_id: int):
@@ -494,10 +500,160 @@ def reprocess_all():
 
 @app.post("/api/decisions/{decision_id}/reject")
 def reject(decision_id: int, body: ReviewAction):
-    ok = reject_decision(decision_id, body.note)
+    ok = reject_decision(
+        decision_id, body.note,
+        corrected_scenario=body.corrected_scenario,
+        corrected_action=body.corrected_action,
+    )
     if not ok:
         raise HTTPException(400, "Decision not found or already reviewed")
-    return {"status": "rejected"}
+    return {
+        "status": "rejected",
+        "corrected_scenario": body.corrected_scenario or None,
+        "corrected_action":   body.corrected_action or None,
+    }
+
+
+@app.get("/api/scenarios")
+def list_scenarios():
+    """Return all scenario IDs from sop_structured.json — used by the reject
+    form to populate the 'Correct scenario' dropdown."""
+    import json as _json
+    sop_file = Path(__file__).parent / "data" / "sop_knowledge" / "sop_structured.json"
+    try:
+        themes = _json.loads(sop_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(500, f"Could not read sop_structured.json: {e}")
+    scenarios = []
+    for theme in themes:
+        theme_id = theme.get("problem_theme", "")
+        for sc in (theme.get("scenarios") or []):
+            sid = sc.get("scenario_id")
+            if not sid:
+                continue
+            scenarios.append({
+                "scenario_id": sid,
+                "label":       sc.get("label", ""),
+                "theme":       theme_id,
+                "queue":       theme.get("queue", ""),
+            })
+    scenarios.sort(key=lambda s: s["scenario_id"])
+    return {"scenarios": scenarios, "count": len(scenarios)}
+
+
+@app.get("/api/stats/flip-rates")
+def stats_flip_rates(min_total: int = 0):
+    """Per-scenario flip-rate stats. ?min_total=N filters out low-volume
+    scenarios (default 0 = include all)."""
+    from src.api.decision_store import get_flip_rates
+    rows = get_flip_rates()
+    if min_total > 0:
+        rows = [r for r in rows if r["total"] >= min_total]
+    return {"flip_rates": rows, "count": len(rows)}
+
+
+@app.get("/api/scenario-audit/{scenario_id}")
+def scenario_audit(scenario_id: str):
+    """All knowledge + history the agent has about one scenario.
+
+    Returns:
+      sop_entry / theme          — entry from sop_structured.json (+ parent theme)
+      stage0_compatibilities     — Stage 0 loss_types this scenario is compatible with
+      stage0_taxonomy            — matching loss_type taxonomy entries from stage0_domain.json
+      chunks                     — every ChromaDB chunk mentioning the scenario_id, grouped by content_type
+      recent_decisions           — last 20 decisions where scenario_identified == this scenario
+      flip_stats                 — flip-rate row for this scenario
+    """
+    import json as _json
+    sid = (scenario_id or "").strip()
+    if not sid:
+        raise HTTPException(400, "scenario_id is required")
+
+    # 1. sop_structured.json entry + parent theme
+    sop_file = Path(__file__).parent / "data" / "sop_knowledge" / "sop_structured.json"
+    try:
+        themes = _json.loads(sop_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(500, f"Could not read sop_structured.json: {e}")
+    sop_entry = None
+    parent_theme = None
+    for theme in themes:
+        for sc in (theme.get("scenarios") or []):
+            if sc.get("scenario_id") == sid:
+                sop_entry = sc
+                parent_theme = {k: v for k, v in theme.items() if k != "scenarios"}
+                break
+        if sop_entry:
+            break
+
+    # 2. Stage 0 compatibilities (from hardcoded scenario_families map)
+    from src.llm.scenario_families import families_for
+    compat = sorted(families_for(sid))
+
+    # 3. Matching stage0_domain.json loss_type taxonomy entries
+    stage0_file = Path(__file__).parent / "data" / "sop_knowledge" / "stage0_domain.json"
+    stage0_taxonomy = {}
+    try:
+        s0 = _json.loads(stage0_file.read_text(encoding="utf-8"))
+        for qkey, section in (s0.get("queues") or {}).items():
+            lt_tax = section.get("loss_type_taxonomy") or {}
+            for lt_name, lt_entry in lt_tax.items():
+                if lt_name in compat:
+                    stage0_taxonomy.setdefault(qkey, {})[lt_name] = lt_entry
+    except Exception:
+        pass
+
+    # 4. ChromaDB chunks mentioning the scenario_id
+    from src.llm.sop_store import get_sop_store
+    raw_chunks = get_sop_store().find_chunks_mentioning(sid)
+    chunks_by_type: dict = {}
+    for c in raw_chunks:
+        chunks_by_type.setdefault(c["content_type"], []).append(c)
+
+    # 5. Last 20 decisions for this scenario
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT id, ticket_id, subject, queue, action, confidence, review_status,
+               created_at, auto_send, guardrail_triggered,
+               reviewer_corrected_scenario, reviewer_corrected_action, reviewer_note
+        FROM decisions
+        WHERE scenario = ?
+        ORDER BY id DESC LIMIT 20
+    """, (sid,)).fetchall()
+    conn.close()
+    recent = [dict(r) for r in rows]
+
+    # 6. Flip-rate stats
+    from src.api.decision_store import get_flip_rates
+    flip = next((r for r in get_flip_rates() if r["scenario"] == sid), None)
+
+    return {
+        "scenario_id":           sid,
+        "found_in_sop":          sop_entry is not None,
+        "sop_entry":             sop_entry,
+        "theme":                 parent_theme,
+        "stage0_compatibilities": compat,
+        "stage0_taxonomy":       stage0_taxonomy,
+        "chunks_by_type":        chunks_by_type,
+        "chunk_count":           len(raw_chunks),
+        "recent_decisions":      recent,
+        "flip_stats":            flip,
+    }
+
+
+class DeprecateBody(BaseModel):
+    deprecated: bool = True
+
+
+@app.post("/api/chunks/{chunk_id:path}/deprecate")
+def deprecate_chunk(chunk_id: str, body: DeprecateBody):
+    """Mark a ChromaDB chunk as deprecated (or undeprecate). retrieve()
+    skips deprecated chunks but they stay in the collection — reversible."""
+    from src.llm.sop_store import get_sop_store
+    ok = get_sop_store().set_chunk_deprecated(chunk_id, body.deprecated)
+    if not ok:
+        raise HTTPException(404, f"Chunk {chunk_id!r} not found")
+    return {"status": "ok", "chunk_id": chunk_id, "deprecated": body.deprecated}
 
 class ModeUpdate(BaseModel):
     autonomous: bool
@@ -510,6 +666,73 @@ def get_mode():
 def set_mode(body: ModeUpdate):
     _save_mode(body.autonomous)
     return {"autonomous": body.autonomous}
+
+
+# ── Admin: destructive ops + bulk processing ─────────────────────
+# Wipe is gated behind a typed confirmation phrase. It's not real auth
+# (anyone on the network can hit the endpoint), just a deliberate friction
+# barrier so the button can't be hit accidentally.
+
+WIPE_CONFIRM_PHRASE = "WIPE ALL DECISIONS"
+
+
+class AdminWipeBody(BaseModel):
+    confirm: str
+    also_clear_stuck: bool = True
+    also_clear_processed: bool = True
+
+
+@app.post("/api/admin/wipe")
+def admin_wipe(body: AdminWipeBody):
+    """Wipe decisions.db. Caller must send exactly the confirmation phrase
+    above. By default also clears stuck_queue.jsonl and live_processed.json
+    so the agent re-processes any pending tickets next poll cycle."""
+    if (body.confirm or "").strip() != WIPE_CONFIRM_PHRASE:
+        raise HTTPException(
+            400,
+            f"Confirmation phrase mismatch. Send {{'confirm': '{WIPE_CONFIRM_PHRASE}'}} to proceed.",
+        )
+
+    summary = {}
+
+    # 1. Wipe decisions table
+    conn = get_conn()
+    n_before = conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
+    conn.execute("DELETE FROM decisions")
+    conn.commit()
+    summary["decisions_deleted"] = n_before
+    conn.close()
+
+    # 2. Stuck queue
+    if body.also_clear_stuck:
+        sq = Path(__file__).parent / "data" / "stuck_queue.jsonl"
+        prev = 0
+        if sq.exists():
+            prev = sum(1 for line in sq.read_text(encoding="utf-8").splitlines() if line.strip())
+            sq.write_text("", encoding="utf-8")
+        summary["stuck_queue_cleared"] = prev
+        # Also invalidate stuck-clusters cache
+        try:
+            from src.api.stuck_clusters import invalidate_cache
+            invalidate_cache()
+        except Exception:
+            pass
+
+    # 3. live_processed.json — clearing this means live_agent will reprocess
+    if body.also_clear_processed:
+        lp = Path(__file__).parent / "data" / "live_processed.json"
+        prev_size = 0
+        if lp.exists():
+            try:
+                prev_size = len(json.loads(lp.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+            lp.write_text("{}", encoding="utf-8")
+        summary["live_processed_cleared"] = prev_size
+
+    print(f"[Admin] WIPE executed: {summary}")
+    return {"status": "ok", "summary": summary}
+
 
 # ── Stuck queue ───────────────────────────────────────────────────
 @app.get("/api/stuck")
@@ -539,8 +762,20 @@ class TrainerAnswer(BaseModel):
 @app.post("/api/stuck/answer")
 def answer_stuck(body: TrainerAnswer):
     from src.llm.agent_brain import get_agent_brain
+    from src.api.stuck_clusters import invalidate_cache
     get_agent_brain().answer_stuck(body.ticket_id, body.answer)
+    invalidate_cache()   # cluster results stale once a question is answered
     return {"status": "answered"}
+
+
+@app.get("/api/stuck/clusters")
+def stuck_clusters(threshold: float = 0.35, window_days: int = 30, refresh: bool = False):
+    """Cluster unanswered stuck questions from the last `window_days` by
+    semantic similarity. Cached for 1h. `refresh=true` bypasses cache."""
+    from src.api.stuck_clusters import get_clusters_cached
+    return get_clusters_cached(
+        threshold=threshold, window_days=window_days, force_refresh=refresh
+    )
 
 
 # ── KT Engine ────────────────────────────────────────────────────
@@ -559,7 +794,7 @@ def kt_add(body: KTEntry):
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     source = f"kt_{body.category}_{ts}"
     # Add to live ChromaDB immediately (no restart needed)
-    get_sop_store().add_knowledge(body.text, source=source)
+    get_sop_store().add_knowledge(body.text, source=source, content_type="kt_addition")
     # Persist to .md so it survives restart + full reload
     KT_SOP_DIR.mkdir(parents=True, exist_ok=True)
     (KT_SOP_DIR / f"{source}.md").write_text(
@@ -670,7 +905,7 @@ def kt_structured(body: StructuredKT):
                 text_parts.append(f"- {r}")
         text = "\n".join(text_parts)
         try:
-            get_sop_store().add_knowledge(text, source=source)
+            get_sop_store().add_knowledge(text, source=source, content_type="kt_domain_activation")
             KT_SOP_DIR.mkdir(parents=True, exist_ok=True)
             (KT_SOP_DIR / f"{source}.md").write_text(text, encoding="utf-8")
             entry = {
@@ -764,7 +999,7 @@ Rules:
     source = f"kt_freeform_{parsed['queue_key']}_{ts}"
     md = f"# Domain KT — {parsed['queue_key']}\n\n{body.text}\n\n_Parsed summary:_ {parsed.get('kt_note','')}"
     try:
-        get_sop_store().add_knowledge(md, source=source)
+        get_sop_store().add_knowledge(md, source=source, content_type="kt_domain_activation")
         KT_SOP_DIR.mkdir(parents=True, exist_ok=True)
         (KT_SOP_DIR / f"{source}.md").write_text(md, encoding="utf-8")
         with open(KT_LOG, "a", encoding="utf-8") as f:
@@ -778,6 +1013,370 @@ Rules:
         pass
 
     return {"status": "ok", "parsed": parsed, "section": section}
+
+
+class GuidedKTBody(BaseModel):
+    queue_hint: str = ""
+    queue_aliases_text: str = ""
+    issue_types_text: str = ""
+    metabase_text: str = ""
+    rules_text: str = ""
+
+
+@app.post("/api/kt/guided-extract")
+def kt_guided_extract(body: GuidedKTBody):
+    """
+    Interview-style KT extraction. Stakeholder fills 4 labeled English fields.
+    Gemini returns: parsed JSON + plain-English summary + specific gap questions.
+    Does NOT save — caller posts to /api/kt/guided-activate to commit.
+    """
+    from src.llm.gemini_client import get_gemini_client
+    from src.llm import stage0 as _s0
+
+    if not (body.queue_aliases_text + body.issue_types_text + body.metabase_text + body.rules_text).strip():
+        raise HTTPException(400, "Fill at least one section before extracting")
+
+    queues_known = [q["queue_key"] for q in _s0.list_queues()]
+    queue_list = ", ".join(queues_known) or "losses_and_debits, payments, consumables, orders_and_planning, cash_handover"
+
+    prompt = f"""You are interviewing a domain expert who is teaching an AI agent how a support queue works.
+They've answered four labeled questions in plain English. Your job:
+1. Extract a structured JSON for the agent.
+2. Write a plain-English back-translation so they can verify what you understood.
+3. Identify specific gaps as direct questions they should answer next.
+
+Available queue keys (pick exactly one): {queue_list}
+User's queue hint (may be empty): "{body.queue_hint}"
+
+================== EXPERT ANSWERS ==================
+
+[A — Queue identity / aliases]
+{body.queue_aliases_text or '(blank)'}
+
+[B — Types of issues handled in this queue, with how the captain phrases them and how to verify/respond]
+{body.issue_types_text or '(blank)'}
+
+[C — Metabase queries used: query name, columns, what each column means, what values trigger what action]
+{body.metabase_text or '(blank)'}
+
+[D — Pre-checks / rules the agent must always follow]
+{body.rules_text or '(blank)'}
+
+================== OUTPUT (JSON ONLY, no markdown) ==================
+{{
+  "parsed": {{
+    "queue_key": "<one of: {queue_list}>",
+    "queue_aliases": ["..."],
+    "metabase_columns": {{
+      "<query_name_snake_case>": "<columns + meaning + which values trigger which action>"
+    }},
+    "loss_type_taxonomy": {{
+      "<issue_type_snake_case>": {{
+        "physical_event": "one-line description",
+        "trigger_scans": "what to check",
+        "captain_signals": ["phrase1", "phrase2"],
+        "scenario_family": "<family name>",
+        "common_sub_scenarios": ["..."]
+      }}
+    }},
+    "reason_l1_taxonomy": {{}},
+    "preprocessing_rules": ["..."],
+    "scenarios": []
+  }},
+  "english_summary": "<2-4 short paragraphs in plain English describing what you understood about this queue from their answers. Address them as 'you'.>",
+  "gaps": [
+    {{
+      "section": "Queue identity | Issue types | Metabase | Rules",
+      "question": "<a direct, specific question they should answer to fill this gap>"
+    }}
+  ]
+}}
+
+Rules:
+- queue_key MUST be from the list above.
+- Issue type keys must be snake_case and concrete (e.g. payment_pending, payment_on_hold, wrong_amount).
+- For each metabase column entry, ALWAYS spell out: column names, what each means, AND which values map to which captain reply.
+- For "gaps", flag ONLY missing things that block the agent from acting. Do NOT pad. Examples of real gaps:
+  * Issue type listed but no captain signal phrases given.
+  * Metabase column listed but no values/meanings explained.
+  * No mention of what the agent should reply when status=X.
+  * Rules section blank — ask if there are pre-checks or confirm there are none.
+- If a section is genuinely complete, do NOT generate a gap for it.
+- Phrase gap questions like a colleague: 'For the payment_on_hold case, what reply should the agent send to the captain?' — not template-y.
+- english_summary must be honest about what's missing too — don't invent details the user didn't give.
+"""
+
+    try:
+        result = get_gemini_client().generate_json(prompt, temperature=0.0)
+    except Exception as e:
+        raise HTTPException(500, f"Gemini parse failed: {e}")
+    if not isinstance(result, dict):
+        raise HTTPException(500, f"Bad parse output: {result}")
+    result.pop("_usage", None)
+
+    parsed = result.get("parsed") or {}
+    if not parsed.get("queue_key"):
+        raise HTTPException(500, "Could not infer queue_key from your answers — try filling the queue identity section.")
+
+    # Lint the parsed payload so the UI can show errors/warnings without saving
+    validation = _s0.validate_payload(parsed)
+
+    return {
+        "parsed": parsed,
+        "english_summary": result.get("english_summary", ""),
+        "gaps": result.get("gaps", []),
+        "validation": validation,
+        "ready_to_activate": validation.get("ok", False),
+    }
+
+
+class GuidedActivateBody(BaseModel):
+    parsed: dict
+    raw_answers: dict = {}   # the four text fields, archived as prose in ChromaDB
+
+
+@app.post("/api/kt/guided-activate")
+def kt_guided_activate(body: GuidedActivateBody):
+    """Commit a guided-extract payload after the user has confirmed it."""
+    from src.llm import stage0 as _s0
+    from src.llm.sop_store import get_sop_store
+
+    parsed = body.parsed or {}
+    qkey = (parsed.get("queue_key") or "").strip()
+    if not qkey:
+        raise HTTPException(400, "parsed.queue_key is required")
+
+    section = _s0.upsert_queue(qkey, {
+        "queue_aliases": parsed.get("queue_aliases") or [],
+        "metabase_columns": parsed.get("metabase_columns") or {},
+        "loss_type_taxonomy": parsed.get("loss_type_taxonomy") or {},
+        "reason_l1_taxonomy": parsed.get("reason_l1_taxonomy") or {},
+        "preprocessing_rules": parsed.get("preprocessing_rules") or [],
+        "scenarios": parsed.get("scenarios") or [],
+    })
+
+    # Archive raw answers + parsed result as prose in ChromaDB for retrieval support
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    source = f"kt_guided_{qkey}_{ts}"
+    parts = [f"# Domain KT (guided) — {qkey}\n"]
+    ra = body.raw_answers or {}
+    for label, key in [
+        ("Queue aliases",  "queue_aliases_text"),
+        ("Issue types",    "issue_types_text"),
+        ("Metabase",       "metabase_text"),
+        ("Rules",          "rules_text"),
+    ]:
+        if ra.get(key):
+            parts.append(f"## {label}\n{ra[key]}\n")
+    md = "\n".join(parts)
+    try:
+        get_sop_store().add_knowledge(md, source=source, content_type="kt_domain_activation")
+        KT_SOP_DIR.mkdir(parents=True, exist_ok=True)
+        (KT_SOP_DIR / f"{source}.md").write_text(md, encoding="utf-8")
+        with open(KT_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "source": source, "category": f"domain_{qkey}",
+                "title": f"Stage 0 domain (guided) — {qkey}",
+                "text_preview": md[:200], "chars": len(md),
+                "added_at": datetime.utcnow().isoformat(),
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+    return {"status": "ok", "queue_key": qkey, "section": section}
+
+
+class GuidedTestBody(BaseModel):
+    parsed: dict
+    ticket_ids: list = []   # explicit list to test
+    auto_pick: int = 0      # if >0 and ticket_ids empty, auto-pick N recent tickets matching queue aliases
+
+
+def _load_ticket_for_test(ticket_id: str):
+    """Look up a ticket from DB → scraped cache. Returns ticket-shaped dict or None."""
+    import re as _re
+    AWB_RE = _re.compile(r'\b(VL[R]?\d{10,15})\b', _re.IGNORECASE)
+
+    # 1. Decisions DB — has the original scraped fields
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM decisions WHERE ticket_id=? ORDER BY id DESC LIMIT 1", (ticket_id,)).fetchone()
+    conn.close()
+    if row:
+        d = dict(row)
+        try: awbs = json.loads(d.get("awbs") or "[]")
+        except: awbs = []
+        return {
+            "ticket_id": ticket_id,
+            "task_id": d.get("task_id") or "",
+            "subject": d.get("subject") or "",
+            "queue": d.get("queue") or "",
+            "queue_key": d.get("queue") or "",
+            "detail": d.get("description") or "",
+            "awb_numbers": awbs,
+            "created_time": d.get("ticket_created_at") or "",
+        }
+
+    # 2. Scraped cache
+    for path in ["data/scraped_tickets_v2.jsonl", "data/scraped_tickets.jsonl"]:
+        p = Path(path)
+        if not p.exists(): continue
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                t = json.loads(line)
+            except: continue
+            if str(t.get("ticket_id", "")) != ticket_id:
+                continue
+            queue = t.get("queue_key") or t.get("queue") or ""
+            raw_detail = t.get("full_description") or t.get("detail") or t.get("subject", "")
+            detail = re.sub(r'<[^>]+>', ' ', raw_detail)
+            detail = _html_mod.unescape(detail)
+            detail = detail.replace(' ', ' ').replace('﻿', '').replace('​', '')
+            detail = re.sub(r'[ \t]{3,}', '  ', detail).strip()
+            subject = t.get("subject_line") or t.get("subject", "")[:120]
+            awbs = list(set(AWB_RE.findall(detail + " " + subject)))
+            awbs += (t.get("awbs_on_page") or [])
+            return {
+                "ticket_id": ticket_id, "task_id": str(t.get("task_id", "")),
+                "subject": subject, "queue": queue, "queue_key": queue,
+                "detail": detail, "awb_numbers": list(set(awbs)),
+                "created_time": t.get("created_time", ""),
+                "email": t.get("email", ""),
+            }
+    return None
+
+
+def _auto_pick_tickets_for_queue(aliases: list, n: int) -> list:
+    """Find recent ticket_ids whose queue matches any alias (case-insensitive substring)."""
+    if not aliases or n <= 0:
+        return []
+    aliases_lc = [a.strip().lower() for a in aliases if a]
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT DISTINCT ticket_id, queue FROM decisions WHERE queue IS NOT NULL AND queue != '' "
+        "ORDER BY id DESC LIMIT 200"
+    ).fetchall()
+    conn.close()
+    picked = []
+    for r in rows:
+        q = (r["queue"] or "").lower()
+        if any(a and (a in q or q in a) for a in aliases_lc):
+            picked.append(r["ticket_id"])
+            if len(picked) >= n:
+                break
+    return picked
+
+
+@app.post("/api/kt/guided-test")
+def kt_guided_test(body: GuidedTestBody):
+    """
+    Run a few real tickets through the brain using STAGED (not yet saved) domain knowledge.
+    Returns per-ticket diagnosis so the stakeholder can verify the agent behaves correctly
+    BEFORE activating the queue.
+    """
+    import copy
+    from src.llm import stage0 as _s0
+    from src.llm.agent_brain import get_agent_brain
+    from src.query_engine.metabase_engine import MetabaseQueryEngine
+
+    parsed = body.parsed or {}
+    qkey = (parsed.get("queue_key") or "").strip()
+    if not qkey:
+        raise HTTPException(400, "parsed.queue_key is required")
+
+    # Resolve target ticket_ids
+    ticket_ids = [t for t in (body.ticket_ids or []) if t]
+    if not ticket_ids and body.auto_pick > 0:
+        ticket_ids = _auto_pick_tickets_for_queue(parsed.get("queue_aliases") or [qkey], body.auto_pick)
+    if not ticket_ids:
+        return {"results": [], "warning": "No tickets found for this queue. Paste ticket IDs manually."}
+
+    # ── Stage the parsed domain in memory (deep snapshot for safe restore) ───
+    original_domain = copy.deepcopy(_s0._DOMAIN)
+    try:
+        section = _s0._DOMAIN.setdefault("queues", {}).setdefault(qkey, {})
+        # Merge parsed fields onto the in-memory section
+        if parsed.get("queue_aliases"):
+            section["queue_aliases"] = list({*(section.get("queue_aliases") or []), *parsed["queue_aliases"]})
+        if parsed.get("metabase_columns"):
+            section.setdefault("metabase_columns", {}).update(parsed["metabase_columns"])
+        if parsed.get("loss_type_taxonomy"):
+            section.setdefault("loss_type_taxonomy", {}).update(parsed["loss_type_taxonomy"])
+        if parsed.get("reason_l1_taxonomy"):
+            section.setdefault("reason_l1_taxonomy", {}).update(parsed["reason_l1_taxonomy"])
+        if parsed.get("preprocessing_rules"):
+            existing = section.get("preprocessing_rules") or []
+            for r in parsed["preprocessing_rules"]:
+                if r and r not in existing:
+                    existing.append(r)
+            section["preprocessing_rules"] = existing
+        # Promote so Stage 0 uses the rich prompt path
+        cols = section.get("metabase_columns") or {}
+        if any("TODO" not in str(v) for v in cols.values()) and cols:
+            section["status"] = "complete"
+
+        # ── Run each ticket through the brain (no DB write) ────────────────
+        brain = get_agent_brain()
+        try:
+            engine = MetabaseQueryEngine()
+        except Exception:
+            engine = None
+
+        results = []
+        for tid in ticket_ids:
+            ticket = _load_ticket_for_test(tid)
+            if not ticket:
+                results.append({"ticket_id": tid, "error": "Not found in DB or scraped cache"})
+                continue
+
+            # Optional: run AWB queries if AWBs present and engine available
+            query_results = []
+            awbs = ticket.get("awb_numbers") or []
+            if awbs and engine is not None:
+                params = {"awb_list": awbs, "partner_id": ticket.get("email", "")}
+                for qname in ["get_loss_attribution", "get_shipment_scan_history_single"]:
+                    try:
+                        qr = engine.execute(qname, params)
+                        query_results.append({
+                            "query_name": qname, "success": qr.success,
+                            "data": qr.data, "error": qr.error,
+                        })
+                    except Exception as e:
+                        query_results.append({
+                            "query_name": qname, "success": False,
+                            "data": {"rows": []}, "error": str(e),
+                        })
+
+            try:
+                decision = brain.process(ticket, query_results)
+                stage0_dump = getattr(decision, "stage0", None) or {}
+                results.append({
+                    "ticket_id": tid,
+                    "subject": ticket.get("subject", ""),
+                    "queue": ticket.get("queue", ""),
+                    "awbs": awbs,
+                    "stage0": {
+                        "physical_event": stage0_dump.get("physical_event", "") if isinstance(stage0_dump, dict) else "",
+                        "loss_type":      stage0_dump.get("loss_type", "")      if isinstance(stage0_dump, dict) else "",
+                        "scenario_hint":  stage0_dump.get("scenario_hint", "")  if isinstance(stage0_dump, dict) else "",
+                        "domain_confidence": stage0_dump.get("domain_confidence", "") if isinstance(stage0_dump, dict) else "",
+                    },
+                    "action": decision.action,
+                    "scenario": decision.scenario_identified,
+                    "confidence": decision.confidence,
+                    "response": decision.response_to_captain or "",
+                    "escalation_queue": decision.escalation_queue or "",
+                    "escalation_reason": decision.escalation_reason or "",
+                    "stuck_question": decision.stuck_question or "",
+                    "reasoning": (decision.reasoning or "")[:600],
+                })
+            except Exception as e:
+                results.append({"ticket_id": tid, "error": f"Brain failed: {e}"})
+
+        return {"results": results, "staged_queue_key": qkey, "tickets_run": len(results)}
+    finally:
+        # Always restore — even on error — so disk-saved domain isn't affected
+        _s0._DOMAIN = original_domain
+
 
 @app.get("/api/learning/log")
 def learning_log():
@@ -950,123 +1549,6 @@ def _fetch_satisfaction() -> dict:
         return {"available": False, "error": str(e), "url": _CSAT_SHEET_URL}
 
 
-@app.get("/api/cxo")
-def cxo_metrics():
-    conn = get_conn()
-    rows = conn.execute("SELECT * FROM decisions ORDER BY created_at ASC").fetchall()
-    conn.close()
-    decisions = [dict(r) for r in rows]
-    total = len(decisions)
-
-    NET_SAVING = 14.5  # Rs.15 human cost – Rs.0.5 agent API cost
-
-    if total == 0:
-        return {
-            "total_processed": 0, "resolution_grade": None,
-            "reversal_grade": None, "non_reversal_grade": None,
-            "reversal_count": 0, "non_reversal_count": 0,
-            "kr_resolution_target": 3.5, "kr_reversal_target": 3.0,
-            "kr_c4_target": 15.0, "kr_sysfail_target": 10.0, "kr_reopen_target": 20.0,
-            "c4_rate": 0, "system_fail_rate": 0, "reopen_rate": 0,
-            "auto_resolution_rate": 0, "sla_compliance": 100.0,
-            "art_minutes": 0, "avg_confidence": 0,
-            "respond_count": 0, "escalate_count": 0, "stuck_count": 0, "needs_info_count": 0,
-            "net_saving_per_ticket": NET_SAVING, "cost_saved_inr": 0,
-            "monthly_ticket_projection": 0, "monthly_saving_inr": 0, "headcount_equiv": 0,
-            "benchmark_grade": 2.40, "benchmark_grade_nosop": 3.03,
-            "satisfaction": _fetch_satisfaction(),
-        }
-
-    # RS scores per decision
-    reversal_rs, non_reversal_rs = [], []
-    for d in decisions:
-        is_rev = _is_reversal(d.get("queue", ""))
-        rs = _action_rs(d.get("action", ""), is_rev, d.get("confidence") or 0)
-        (reversal_rs if is_rev else non_reversal_rs).append(rs)
-
-    all_rs = reversal_rs + non_reversal_rs
-    res_grade     = round(sum(all_rs) / len(all_rs) * 5, 2)
-    rev_grade     = round(sum(reversal_rs) / len(reversal_rs) * 5, 2) if reversal_rs else None
-    non_rev_grade = round(sum(non_reversal_rs) / len(non_reversal_rs) * 5, 2) if non_reversal_rs else None
-
-    # Counts
-    by_action  = {a: sum(1 for d in decisions if d.get("action") == a)
-                  for a in ("respond", "escalate", "stuck", "needs_info")}
-    auto_sent  = sum(1 for d in decisions if d.get("auto_send"))
-    approved   = sum(1 for d in decisions if d.get("review_status") == "approved")
-    rejected   = sum(1 for d in decisions if d.get("review_status") == "rejected")
-    sla_breach = sum(1 for d in decisions if d.get("sla_breached"))
-
-    stuck_total = by_action["stuck"] + by_action["needs_info"]
-    c4_rate          = round(by_action["stuck"] / total * 100, 1)
-    system_fail_rate = round(stuck_total / total * 100, 1)
-    reopen_rate      = round(rejected / total * 100, 1)
-    auto_res_rate    = round(auto_sent / total * 100, 1)
-    sla_compliance   = round((total - sla_breach) / total * 100, 1)
-
-    # ART
-    art_deltas = []
-    for d in decisions:
-        if d.get("created_at") and d.get("resolved_at"):
-            try:
-                c = datetime.fromisoformat(d["created_at"].replace("Z", "+00:00"))
-                s = datetime.fromisoformat(d["resolved_at"].replace("Z", "+00:00"))
-                art_deltas.append((s - c).total_seconds() / 60)
-            except Exception:
-                pass
-    art_minutes = round(sum(art_deltas) / len(art_deltas), 1) if art_deltas else 0.0
-    avg_conf    = round(sum(d.get("confidence") or 0 for d in decisions) / total, 1)
-
-    # Financial + projections
-    cost_saved = round((auto_sent + approved) * NET_SAVING)
-    try:
-        dts = [datetime.fromisoformat(d["created_at"].replace("Z", "+00:00"))
-               for d in decisions if d.get("created_at")]
-        n_days       = max((max(dts) - min(dts)).total_seconds() / 86400, 0.5)
-        daily_rate   = total / n_days
-        monthly_tickets = round(daily_rate * 30)
-        monthly_saving  = round(monthly_tickets * NET_SAVING)
-        headcount_equiv = round(daily_rate / 65, 2)   # ~65 tickets/human/day
-    except Exception:
-        monthly_tickets = total * 30
-        monthly_saving  = round(monthly_tickets * NET_SAVING)
-        headcount_equiv = 0.0
-
-    return {
-        "total_processed": total,
-        "resolution_grade": res_grade,
-        "reversal_grade": rev_grade,
-        "non_reversal_grade": non_rev_grade,
-        "reversal_count": len(reversal_rs),
-        "non_reversal_count": len(non_reversal_rs),
-        "kr_resolution_target": 3.5,
-        "kr_reversal_target": 3.0,
-        "kr_c4_target": 15.0,
-        "kr_sysfail_target": 10.0,
-        "kr_reopen_target": 20.0,
-        "c4_rate": c4_rate,
-        "system_fail_rate": system_fail_rate,
-        "reopen_rate": reopen_rate,
-        "auto_resolution_rate": auto_res_rate,
-        "sla_compliance": sla_compliance,
-        "art_minutes": art_minutes,
-        "avg_confidence": avg_conf,
-        "respond_count": by_action["respond"],
-        "escalate_count": by_action["escalate"],
-        "stuck_count": by_action["stuck"],
-        "needs_info_count": by_action["needs_info"],
-        "net_saving_per_ticket": NET_SAVING,
-        "cost_saved_inr": cost_saved,
-        "monthly_ticket_projection": monthly_tickets,
-        "monthly_saving_inr": monthly_saving,
-        "headcount_equiv": headcount_equiv,
-        "benchmark_grade": 2.40,
-        "benchmark_grade_nosop": 3.03,
-        "satisfaction": _fetch_satisfaction(),
-    }
-
-
-# ── Re-enrich old tickets ─────────────────────────────────────────
 
 @app.post("/api/decisions/reenrich")
 def reenrich_descriptions():

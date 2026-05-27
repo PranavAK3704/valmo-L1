@@ -14,6 +14,8 @@ venv/
 
 # Runtime data — regeneratable, may contain PII / live tickets / API keys
 data/decisions.db
+data/decisions.db-shm
+data/decisions.db-wal
 data/tickets.db
 data/chroma_db/
 data/.mode
@@ -46,3 +48,9 @@ Thumbs.db
 # Only exclude the per-ticket noise:
 data/sop_knowledge/trainer_qa_*.md
 data/sop_knowledge/resolved_*.md
+
+# Eval per-run output — labeled set IS committed; results aren't
+data/eval/runs/
+
+# Recon dumps from tests/recon_*.py — contain real ticket data (PII)
+data/recon_*.json

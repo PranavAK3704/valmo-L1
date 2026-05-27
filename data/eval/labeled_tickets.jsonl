@@ -1,0 +1,23 @@
+# Eval set for the Valmo L1 agent.
+# One JSON object per line. Lines starting with # are comments and ignored.
+#
+# Required fields per row:
+#   ticket_id          : str  unique id (real Kapture id, or synthetic like EVAL_001)
+#   subject            : str  subject line shown to the agent
+#   description        : str  full ticket body (what the captain wrote)
+#   queue              : str  Kapture queue label, e.g. "W- LD", "Payments"
+#   awbs               : list of AWB strings, e.g. ["VL1234567890"]
+#   expected_scenario  : str  scenario_id from sop_structured.json (e.g. "HS_1_1")
+#   expected_action    : str  "respond" | "escalate" | "needs_info" | "stuck"
+#   notes              : str  why this is the expected answer (for human review)
+#
+# Optional:
+#   metabase_results   : list of {query_name, success, data:{rows:[...]}, error?}
+#                        When present, brain.process() uses these as mocked Metabase
+#                        responses instead of running real queries. Use this to make
+#                        the eval deterministic regardless of Metabase availability.
+#
+# The one row below is a TEMPLATE — edit/duplicate it. The harness skips
+# rows missing ticket_id or expected_scenario, so you can keep partial drafts
+# in this file safely.
+{"ticket_id": "EVAL_HS_1_1_TEMPLATE", "subject": "Hardstop loss marked wrongly on my shipments", "description": "Team, loss marked against my hub for AWB VL1234567890 but I connected it forward within 4 days. Please check Log10 — shipment was at INWARD_SCAN on day 1 and MANIFEST_SCAN on day 4 at my hub MUM_DC_01. Request reversal.", "queue": "W- LD", "awbs": ["VL1234567890"], "expected_scenario": "HS_1_1", "expected_action": "escalate", "notes": "Captain's claim of valid scans (within 7-day SLA) plus SOP-followed pattern. HS_1_1 = valid scans + SOP followed -> L2 reversal. With mocked Metabase showing the scans below, agent should escalate; without mock, agent should go stuck because it cannot independently verify (Rule 1 guardrail).", "metabase_results": [{"query_name": "get_loss_attribution", "success": true, "data": {"rows": [{"awb": "VL1234567890", "loss_type": "hardstop", "attributed_node": "MUM_DC_01", "reason_l1": "hardstop", "loss_date": "2026-04-10"}]}}, {"query_name": "get_shipment_scan_history_single", "success": true, "data": {"rows": [{"scan": "INWARD_SCAN", "node": "MUM_DC_01", "ts": "2026-04-06T09:12:00Z"}, {"scan": "MANIFEST_SCAN", "node": "MUM_DC_01", "ts": "2026-04-10T14:30:00Z"}]}}]}

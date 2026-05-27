@@ -14,10 +14,10 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional  # noqa: F401
 
 from src.llm.gemini_client import get_gemini_client
-from src.llm.sop_store import get_sop_store
+from src.llm.sop_store import get_sop_store, format_grouped_chunks
 from src.llm import stage0 as _stage0
 
 logger = logging.getLogger(__name__)
@@ -175,6 +175,77 @@ def _match_structured_sop(ticket: Dict) -> str:
 
 AUTO_SEND_CONFIDENCE = 7.0   # >= 7 auto-send, < 7 goes for review
 
+# ── Rule 1 — captain claims verified-data guardrail ─────────────────
+# Case-insensitive substring matches in ticket description.
+# When the captain asserts they checked Metabase/Log10 but our independent
+# queries returned nothing, the agent must NOT act on the captain's claim.
+CAPTAIN_CLAIM_PHRASES = [
+    "i checked", "i have checked",
+    "metabase shows", "metabase says", "as per metabase", "verified from metabase",
+    "log10 shows", "log10 says", "as per log10", "verified from log10",
+    "amount_recovered", "amount recovered",
+    "fe loss marked shows", "per lm fe loss marked",
+]
+
+# Required Metabase queries for L&D — if these are empty/failed AND the
+# captain has cited verifying them, we cannot proceed.
+_RULE_1_REQUIRED_QUERIES = {"get_loss_attribution", "get_shipment_scan_history_single"}
+
+# Queue aliases that map to losses_and_debits (must match _match_structured_sop).
+_LD_QUEUE_TOKENS = {"w- ld", "w-ld", "ld", "hardstop", "shipment_shortage",
+                    "shortage", "losses & debits", "losses and debits",
+                    "losses_and_debits"}
+
+
+def _is_ld_queue(ticket: Dict) -> bool:
+    q = (ticket.get("queue") or ticket.get("queue_key") or "").strip().lower()
+    return q in _LD_QUEUE_TOKENS
+
+
+def _rule_1_match(ticket: Dict, query_results: List[Dict]) -> Optional[str]:
+    """
+    Returns the first matched captain-claim phrase if Rule 1 conditions hold,
+    else None. Conditions:
+      - queue is losses_and_debits
+      - at least one AWB extracted
+      - at least one required Metabase query is empty OR failed
+      - ticket description contains any CAPTAIN_CLAIM_PHRASES entry
+    """
+    if not _is_ld_queue(ticket):
+        return None
+    awbs = ticket.get("awb_numbers") or ticket.get("awbs") or []
+    if not awbs:
+        return None
+
+    # Index query results by name. Missing entirely == empty.
+    by_name: Dict[str, Dict] = {qr.get("query_name", ""): qr for qr in (query_results or [])}
+    required_empty_or_failed = False
+    for qname in _RULE_1_REQUIRED_QUERIES:
+        qr = by_name.get(qname)
+        if qr is None:
+            required_empty_or_failed = True
+            break
+        if not qr.get("success"):
+            required_empty_or_failed = True
+            break
+        rows = (qr.get("data") or {}).get("rows") or []
+        if not rows:
+            required_empty_or_failed = True
+            break
+    if not required_empty_or_failed:
+        return None
+
+    desc = " ".join([
+        ticket.get("detail") or "",
+        ticket.get("description") or "",
+        ticket.get("full_description") or "",
+        ticket.get("subject") or "",
+    ]).lower()
+    for phrase in CAPTAIN_CLAIM_PHRASES:
+        if phrase in desc:
+            return phrase
+    return None
+
 
 @dataclass
 class BrainDecision:
@@ -191,6 +262,8 @@ class BrainDecision:
     auto_send: bool = False            # True if confidence >= threshold
     thinking_steps: List[Dict] = field(default_factory=list)  # step-by-step trace for UI
     usage: Dict = field(default_factory=dict)  # {input_tokens, output_tokens, cost_inr}
+    stage0: Dict = field(default_factory=dict)  # situational assessment dump
+    guardrail_triggered: str = ""              # "" | "rule_2_family_mismatch" | "rule_1_unverified_claim"
 
 
 def _blocker_upgrade(ticket: Dict, decision: "BrainDecision", query_results: List[Dict]) -> str:
@@ -247,27 +320,29 @@ def _extract_attachment_summary(ticket: Dict) -> str:
     lines = []
     api_data = ticket.get("api_data") or {}
 
-    # ── Read S3 attachment URLs via Gemini Vision ─────────────────
+    # ── Use the per-ticket cache populated in process() Step 1 ────
+    # _read_all_attachments has already downloaded + parsed each file
+    # (Excel/CSV locally, PDF/image via Vision). Just format for the prompt.
     attachment_urls = ticket.get("attachment_urls") or []
-    if attachment_urls:
+    cache = ticket.get("_attachment_text_cache")
+    if cache is None and attachment_urls:
+        # Direct callers (legacy test paths) might invoke _build_prompt
+        # without running process() first. Populate the cache lazily.
         try:
-            from src.llm.gemini_client import get_gemini_client
-            client = get_gemini_client()
-            for url in attachment_urls[:3]:  # limit to 3 attachments
-                import pathlib
-                fname = pathlib.Path(url.split("?")[0]).name
-                ext = pathlib.Path(fname).suffix.lower()
-                if ext in {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".xlsx", ".xls", ".csv"}:
-                    logger.info(f"[Attachment] Reading {fname} via Gemini Vision")
-                    content = client.read_attachment(url, fname)
-                    if content and not content.startswith("[Could not"):
-                        lines.append(f"--- Attachment: {fname} ---\n{content}\n---")
-                    else:
-                        lines.append(f"Attachment {fname}: {content}")
-                else:
-                    lines.append(f"Attachment (unsupported type): {fname}")
+            cache = _read_all_attachments(ticket)
         except Exception as e:
+            cache = {}
             lines.append(f"Attachment read error: {e}")
+    if isinstance(cache, dict):
+        import pathlib as _pl
+        for url, content in cache.items():
+            fname = _pl.Path(url.split("?")[0]).name
+            if content:
+                # Truncate big Excel dumps so they don't dominate the prompt
+                shown = content if len(content) <= 1500 else content[:1500] + f"\n…(+{len(content)-1500} chars truncated)"
+                lines.append(f"--- Attachment: {fname} ---\n{shown}\n---")
+            else:
+                lines.append(f"Attachment {fname}: (no text extracted)")
 
     # ── Check explicit attachment API response (filenames only) ──
     attachments = api_data.get("attachments") or []
@@ -301,30 +376,201 @@ def _extract_attachment_summary(ticket: Dict) -> str:
     return "\n".join(lines) if lines else "No attachments detected"
 
 
+def _format_captain_section(ticket: Dict) -> str:
+    """Render the captain's voice block with explicit source attribution.
+    Pulls from the new role-aware fields populated by scrape_tickets_v2.
+    Falls back to the legacy 'detail' field for backward compatibility."""
+    cap_problem = ticket.get("captain_problem") or ""
+    cap_source  = ticket.get("captain_problem_source") or ""
+    captain_msgs = ticket.get("captain_messages") or []
+
+    # Legacy fallback: when running against cached tickets (no role parsing yet)
+    if not cap_problem:
+        cap_problem = (
+            ticket.get("detail") or ticket.get("description")
+            or ticket.get("full_description") or ""
+        )
+        cap_source = "legacy_description_field"
+
+    src_tag = f"  (source: {cap_source})" if cap_source else ""
+    out = [f"## CAPTAIN'S PROBLEM{src_tag}"]
+    out.append(cap_problem.strip() if cap_problem else "(No captain problem statement could be extracted — agent should use action=needs_info.)")
+
+    # Captain follow-ups (excluding the first one if it was already used as captain_problem)
+    follow_ups = []
+    if captain_msgs:
+        # Skip the first message if it's the source we used
+        skip_first = cap_source.startswith("first_captain_message")
+        start_idx = 1 if skip_first else 0
+        for m in captain_msgs[start_idx:start_idx + 5]:
+            ts = (m.get("ts") or "")[:16]
+            sender = m.get("sender") or "Captain"
+            body = (m.get("body") or "")[:600]
+            follow_ups.append(f"  [{ts}] {sender}: {body}")
+    if follow_ups:
+        out.append("")
+        out.append("## CAPTAIN'S FOLLOW-UP MESSAGES (chronological)")
+        out.extend(follow_ups)
+
+    # Misplaced-description warning (prose in wrong field)
+    misplaced = ticket.get("misplaced_description") or {}
+    if misplaced.get("field"):
+        out.append("")
+        out.append(f"## WRONG-FIELD WARNING")
+        out.append(f"  Captain entered prose content in the field \"{misplaced['field']}\" "
+                   f"which is usually short/structured. The text above as CAPTAIN'S PROBLEM "
+                   f"was extracted from there — do not treat this as data corruption; treat "
+                   f"it as the captain's actual statement.")
+
+    # Misplaced-attachment warning (image URL leaked into AWB / other text field)
+    mp_att = ticket.get("misplaced_attachment_field") or ""
+    if mp_att:
+        out.append("")
+        out.append(f"## ATTACHMENT-IN-WRONG-FIELD WARNING")
+        out.append(f"  An image/PDF attachment appears to have been uploaded into the "
+                   f"\"{mp_att}\" field (which usually holds text data). If CAPTAIN'S PROBLEM "
+                   f"above is blank or unhelpful AND attachments are listed in the Attachments "
+                   f"section above, the captain's actual problem may be ONLY in the image. "
+                   f"In that case use action=needs_info and specifically ask the captain to "
+                   f"type out what's in the image (or what their issue is in words).")
+    return "\n".join(out)
+
+
+def _format_l1_thread(ticket: Dict) -> str:
+    """L1-only voice. Provided for context (e.g. has L1 already asked for AWB?)
+    but EXPLICITLY labeled so the model doesn't confuse it with captain's voice."""
+    l1_msgs = ticket.get("l1_messages") or []
+    if not l1_msgs:
+        return ""
+    out = ["## L1 AGENT THREAD (for context only — these are PREVIOUS L1 RESPONSES, not the captain's problem)"]
+    for m in l1_msgs[:6]:
+        ts = (m.get("ts") or "")[:16]
+        sender = m.get("sender") or "L1"
+        body = (m.get("body") or "")[:500]
+        out.append(f"  [{ts}] {sender}: {body}")
+    return "\n".join(out)
+
+
+# OCR prompt tuned for "captain uploaded screenshot as their problem statement".
+# Different from gemini_client.read_attachment's default (which is evidence-doc tuned).
+_CAPTAIN_OCR_PROMPT = (
+    "A delivery partner (captain) uploaded this image/document to a support "
+    "ticket. They appear to have used it INSTEAD OF typing their problem in "
+    "the text field. Extract: 1) what the captain is claiming is wrong "
+    "(in 2-3 sentences, in plain English), 2) any AWB numbers visible "
+    "(format VL followed by digits), 3) any amounts/dates/hub codes visible. "
+    "Reply concisely — no markdown formatting. If the image is blank, "
+    "low-quality, or shows no useful problem statement, reply EXACTLY: "
+    "NO_CAPTAIN_CONTENT"
+)
+
+
+def _read_all_attachments(ticket: Dict, max_attachments: int = 3) -> Dict[str, str]:
+    """Read every attachment on the ticket (up to max_attachments) and return
+    {url: text_content}. Caches the result on ticket['_attachment_text_cache']
+    so we don't re-OCR / re-parse the same files. Excel/CSV are parsed
+    locally; PDFs/images go through Gemini Vision.
+
+    Each cache entry is the extracted text, or "" when extraction failed."""
+    cache = ticket.get("_attachment_text_cache")
+    if isinstance(cache, dict):
+        return cache
+
+    attachments = ticket.get("attachment_urls") or []
+    out: Dict[str, str] = {}
+    if not attachments:
+        ticket["_attachment_text_cache"] = out
+        return out
+
+    import pathlib
+    client = get_gemini_client()
+    for url in attachments[:max_attachments]:
+        if not isinstance(url, str) or not url.startswith("http"):
+            continue
+        fname = pathlib.Path(url.split("?")[0]).name
+        try:
+            text = client.read_attachment(url, filename=fname)
+            if not text:
+                out[url] = ""
+                continue
+            if text.startswith("[Could not") or text.startswith("[Attachment type"):
+                logger.info(f"[Brain] attachment skipped ({fname}): {text[:80]}")
+                out[url] = ""
+                continue
+            out[url] = text.strip()
+            logger.info(f"[Brain] read attachment ({fname}): {len(text)} chars")
+        except Exception as e:
+            logger.warning(f"[Brain] attachment read failed ({fname}): {e}")
+            out[url] = ""
+
+    ticket["_attachment_text_cache"] = out
+    return out
+
+
+def _ocr_captain_attachment(ticket: Dict) -> str:
+    """When the captain skipped the text description but uploaded a JPEG/PDF/
+    Excel (often misplaced into the AWB field), recover a problem statement
+    from the attachments. Uses the per-ticket attachment cache so this is free
+    if _read_all_attachments has already run.
+
+    For images/PDFs we re-OCR with the captain-specific prompt (since the
+    default prompt is tuned for evidence-doc extraction, not problem statements).
+    For Excel/CSV the local-parse output is already raw cell text — we just
+    feed that through, capped to ~500 chars so the model sees a summary."""
+    attachments = ticket.get("attachment_urls") or []
+    if not attachments:
+        return ""
+
+    import pathlib
+    pieces: List[str] = []
+    client = get_gemini_client()
+    cache = ticket.get("_attachment_text_cache") or {}
+
+    for url in attachments[:3]:
+        if not isinstance(url, str) or not url.startswith("http"):
+            continue
+        fname = pathlib.Path(url.split("?")[0]).name
+        ext = pathlib.Path(fname).suffix.lower()
+
+        if ext in (".xlsx", ".xls", ".csv"):
+            # Local-parse output already in cache (or re-fetchable cheaply)
+            text = cache.get(url) or client.read_attachment(url, filename=fname)
+            if text and not text.startswith("[Could not"):
+                pieces.append(f"[from {fname}] {text[:500]}")
+            continue
+
+        # Image/PDF: re-OCR with captain prompt
+        try:
+            text = client.read_attachment(url, filename=fname, prompt=_CAPTAIN_OCR_PROMPT)
+        except Exception as e:
+            logger.warning(f"[Brain] captain-attachment OCR failed ({fname}): {e}")
+            continue
+        if not text:
+            continue
+        text = text.strip()
+        if text.upper().startswith("NO_CAPTAIN_CONTENT"):
+            continue
+        if text.startswith("[Could not") or text.startswith("[Attachment type"):
+            continue
+        pieces.append(f"[from {fname}] {text}")
+
+    return "\n\n".join(pieces)
+
+
 def _build_prompt(ticket: Dict, sop_context: str, query_results_text: str,
                   stage0_block: str = "") -> str:
     """Build the full prompt for Gemini."""
     awbs = ticket.get("awb_numbers") or ticket.get("awbs") or []
     attachment_summary = _extract_attachment_summary(ticket)
 
-    # Include conversation thread if available
-    api_data = ticket.get("api_data") or {}
-    conversations = api_data.get("conversations") or api_data.get("email") or []
-    conv_text = ""
-    if isinstance(conversations, list) and conversations:
-        parts = []
-        for c in conversations[:3]:
-            body = (c.get("body") or c.get("message") or c.get("email_body") or "")[:300]
-            sender = c.get("sender_name") or c.get("from") or "Captain"
-            if body:
-                parts.append(f"[{sender}]: {body}")
-        if parts:
-            conv_text = "\n".join(parts)
+    # Role-aware sections (replaces the old flat 'Description:' + 'Conversation Thread:')
+    captain_block = _format_captain_section(ticket)
+    l1_block      = _format_l1_thread(ticket)
 
     # Structured SOP decision tree (pre-filtered by queue + keywords)
     structured_block = _match_structured_sop(ticket)
 
-    return f"""## TICKET
+    return f"""## TICKET METADATA
 Ticket ID  : {ticket.get('ticket_id', 'N/A')}
 Partner ID : {ticket.get('partner_id', 'N/A')}
 Queue      : {ticket.get('queue', ticket.get('queue_key', 'N/A'))}
@@ -333,12 +579,11 @@ Hub Code   : {ticket.get('hub_code', 'N/A')}
 AWBs       : {', '.join(awbs) if awbs else 'Not provided'}
 Subject    : {ticket.get('subject', '')}
 Attachments: {attachment_summary}
-Description:
-{ticket.get('detail', ticket.get('description', 'No description'))}
-{f"""
-Conversation Thread:
-{conv_text}""" if conv_text else ""}
 
+{captain_block}
+{f"""
+{l1_block}
+""" if l1_block else ""}
 ---
 {f"""
 {stage0_block}
@@ -386,20 +631,77 @@ class AgentBrain:
 
         # ── Step 1: Ticket intake ──────────────────────────────────
         awbs = ticket.get("awb_numbers") or ticket.get("awbs") or []
-        # Fallback: extract AWBs from description text if not explicitly set
+        # Fallback A: extract AWBs from description text if not explicitly set
         if not awbs:
             desc_text = ticket.get("detail") or ticket.get("description") or ticket.get("full_description") or ""
             awb_field = ticket.get("awb_field") or ""
             awbs = _extract_awbs_from_text(desc_text + " " + awb_field)
-            if awbs:
-                ticket["awb_numbers"] = awbs
+
+        # Fallback B: read every attachment (Excel/CSV via openpyxl locally,
+        # PDF/images via Gemini Vision) and extract AWBs from the contents.
+        # Cached on the ticket so we don't re-read for the prompt assembly.
+        attachment_texts = _read_all_attachments(ticket)
+        att_awbs: list = []
+        if attachment_texts:
+            joined = "\n\n".join(attachment_texts.values())
+            att_awbs = _extract_awbs_from_text(joined)
+            if att_awbs:
+                logger.info(
+                    f"[Brain] recovered {len(att_awbs)} AWB(s) from attachments "
+                    f"for ticket={ticket.get('ticket_id')}: {att_awbs[:5]}"
+                    f"{'…' if len(att_awbs) > 5 else ''}"
+                )
+        # Merge: prefer existing AWBs but extend with attachment ones (dedup,
+        # preserve order)
+        seen = set(awbs)
+        for a in att_awbs:
+            if a not in seen:
+                awbs.append(a); seen.add(a)
+        if awbs:
+            ticket["awb_numbers"] = awbs
+
         queue = ticket.get("queue") or ticket.get("queue_key") or "Unknown"
         hub   = ticket.get("hub_code") or ticket.get("partner_id") or "—"
+        intake_detail = f"Queue: {queue} | AWBs: {', '.join(awbs[:5]) if awbs else 'None found'}{' +' + str(len(awbs)-5) if len(awbs) > 5 else ''} | Hub: {hub}"
+        if att_awbs:
+            intake_detail += f" | {len(att_awbs)} AWBs recovered from attachments"
         steps.append({
             "icon": "\U0001f50d", "label": "Reading ticket",
-            "detail": f"Queue: {queue} | AWBs: {', '.join(awbs) if awbs else 'None found'} | Hub: {hub}",
+            "detail": intake_detail,
             "status": "done",
         })
+
+        # ── Step 1b: OCR fallback — recover captain's problem from a
+        # misplaced attachment when the text description is empty ──
+        if not (ticket.get("captain_problem") or "").strip() and ticket.get("attachment_urls"):
+            steps.append({
+                "icon": "\U0001f5bc️", "label": "Captain uploaded attachment instead of typing — running OCR",
+                "detail": f"{len(ticket.get('attachment_urls') or [])} attachment(s) — extracting problem statement via Gemini Vision",
+                "status": "thinking",
+            })
+            ocr_text = _ocr_captain_attachment(ticket)
+            if ocr_text:
+                ticket["captain_problem"] = ocr_text
+                ticket["captain_problem_source"] = "attachment_ocr"
+                steps[-1] = {
+                    "icon": "\U0001f5bc️", "label": "OCR recovered captain's problem",
+                    "detail": (ocr_text[:140] + ("…" if len(ocr_text) > 140 else "")),
+                    "status": "done",
+                }
+                logger.info(f"[Brain] OCR recovered captain_problem ({len(ocr_text)} chars) for ticket={ticket.get('ticket_id')}")
+                # Also retry AWB extraction against OCR'd text
+                if not awbs:
+                    new_awbs = _extract_awbs_from_text(ocr_text)
+                    if new_awbs:
+                        awbs = new_awbs
+                        ticket["awb_numbers"] = awbs
+                        logger.info(f"[Brain] OCR also recovered AWBs: {awbs}")
+            else:
+                steps[-1] = {
+                    "icon": "\U0001f5bc️", "label": "OCR did not find usable captain content",
+                    "detail": "Attachment was blank or unreadable — will request text description",
+                    "status": "warning",
+                }
 
         # ── Step 2: Stage 0 — situational reasoning ───────────────
         stage0_block = ""
@@ -451,11 +753,41 @@ class AgentBrain:
             ticket.get("detail", ticket.get("description", "")),
             queue, ticket.get("sub_queue", ""),
         ]))[:500]
-        sop_context = self._sop.retrieve(search_query, k=6)
-        chunk_count = max(1, len([c for c in sop_context.split("---") if c.strip()]))
+        # Use Stage 0's canonical queue match when available so retrieval
+        # filters chunks to {this_queue, general}. Falls back to None when
+        # Stage 0 didn't resolve a queue (unknown / placeholder domain).
+        retrieval_queue = locals().get("assessment", None)
+        retrieval_queue = (
+            getattr(retrieval_queue, "queue_key_matched", "") or ""
+        ) if retrieval_queue is not None else ""
+        grouped_chunks = self._sop.retrieve(
+            search_query, k=10, queue=retrieval_queue or None
+        )
+        sop_context = format_grouped_chunks(grouped_chunks)
+        chunk_count = sum(len(v) for v in grouped_chunks.values())
+
+        # Novel-scenario signal: log when retrieval returned 0 precedents +
+        # 0 trainer-QA. Means the system has never been calibrated on a
+        # ticket like this. Useful for flagging tickets the human reviewer
+        # should pay extra attention to (and that should later become eval
+        # set rows).
+        precedent_count = len(grouped_chunks.get("resolved_precedent", []) or [])
+        trainer_count   = len(grouped_chunks.get("trainer_qa", []) or [])
+        if precedent_count == 0 and trainer_count == 0:
+            logger.info(
+                f"[Brain] NOVEL_SCENARIO ticket={ticket.get('ticket_id')} "
+                f"queue={queue!r} — 0 precedents, 0 trainer Q&A retrieved. "
+                f"Agent will reason from canonical SOP only."
+            )
+        # Per-source breakdown for the trace UI — "3 SOP + 2 precedent + 1 KT"
+        ctype_summary = ", ".join(
+            f"{len(v)} {k.replace('_', ' ')}"
+            for k, v in sorted(grouped_chunks.items(), key=lambda kv: -len(kv[1]))
+            if v
+        ) or "none"
         steps.append({
             "icon": "\U0001f4d6", "label": "Searching SOP knowledge base",
-            "detail": f"Found {chunk_count} relevant SOP section(s) for this ticket type",
+            "detail": f"{chunk_count} chunk(s) retrieved: {ctype_summary}",
             "status": "done",
         })
 
@@ -516,10 +848,91 @@ class AgentBrain:
             reasoning           = raw.get("reasoning", ""),
             usage               = raw.get("_usage", {}),
         )
+
+        # ── Guardrail: Rule 1 — captain's claim with empty Metabase ──
+        # Captain asserts they verified data ("metabase shows X", "amount
+        # recovered", etc.) but our independent Metabase queries returned
+        # nothing. Acting on the captain's claim violates Rule 1.
+        try:
+            if decision.action in ("respond", "escalate"):
+                _matched_phrase = _rule_1_match(ticket, query_results)
+                if _matched_phrase:
+                    _orig_action     = decision.action
+                    _orig_confidence = decision.confidence
+                    decision.action = "stuck"
+                    decision.stuck_question = (
+                        f"Captain claims they verified data (\"{_matched_phrase}\"), "
+                        f"but Metabase queries returned empty/failed. Trainer needs to "
+                        f"pull Log10 / verify independently before {_orig_action}."
+                    )
+                    decision.confidence = min(decision.confidence, 5.0)
+                    decision.guardrail_triggered = "rule_1_unverified_claim"
+                    logger.warning(
+                        f"[Guardrail] rule_1_unverified_claim fired on ticket="
+                        f"{ticket.get('ticket_id')}: phrase=\"{_matched_phrase}\", "
+                        f"queue={ticket.get('queue')}, awbs={ticket.get('awb_numbers')}. "
+                        f"Overrode action {_orig_action}->stuck, capped confidence "
+                        f"{_orig_confidence}->{decision.confidence}"
+                    )
+        except Exception as e:
+            logger.debug(f"[Guardrail] rule_1 check skipped: {e}")
+
+        # ── Guardrail: Rule 2 — Stage 0 family lock ───────────────
+        # If Stage 0 ran with high confidence and emitted a specific L&D
+        # loss_type, the chosen scenario MUST belong to that loss family.
+        # Otherwise main reasoning silently escaped Stage 0's diagnosis.
+        # Skip if Rule 1 already triggered (one guardrail flag per decision).
+        try:
+            if not decision.guardrail_triggered:
+                from src.llm.scenario_families import (
+                    family_mismatch, describe_families,
+                )
+                _a = locals().get("assessment", None)
+                if (_a is not None
+                    and getattr(_a, "domain_confidence", "") == "high"
+                    and family_mismatch(decision.scenario_identified, getattr(_a, "loss_type", ""))):
+                    _orig_action     = decision.action
+                    _orig_confidence = decision.confidence
+                    _actual_family   = describe_families(decision.scenario_identified)
+                    decision.action = "stuck"
+                    decision.stuck_question = (
+                        f"Stage 0 diagnosed loss_type={_a.loss_type} with high confidence, "
+                        f"but main reasoning picked scenario {decision.scenario_identified} "
+                        f"from family {_actual_family}. Which is correct?"
+                    )
+                    decision.confidence = min(decision.confidence, 5.0)
+                    decision.guardrail_triggered = "rule_2_family_mismatch"
+                    logger.warning(
+                        f"[Guardrail] rule_2_family_mismatch fired on ticket="
+                        f"{ticket.get('ticket_id')}: stage0={_a.loss_type}/high vs "
+                        f"scenario={decision.scenario_identified} ({_actual_family}). "
+                        f"Overrode action {_orig_action}->stuck, capped confidence "
+                        f"{_orig_confidence}->{decision.confidence}"
+                    )
+        except Exception as e:
+            logger.debug(f"[Guardrail] rule_2 check skipped: {e}")
+
         decision.auto_send = (
             decision.action == "respond"
             and decision.confidence >= AUTO_SEND_CONFIDENCE
         )
+
+        # ── Mode gate — review mode blocks all auto-sends ─────────
+        # When data/.mode == "review", even high-confidence respond decisions
+        # must be human-approved. Default is "review" (safe). Only flip to
+        # "autonomous" via the dashboard toggle once flip-rate data justifies it.
+        if decision.auto_send:
+            try:
+                from src.api.mode import get_mode
+                if get_mode() != "autonomous":
+                    decision.auto_send = False
+                    logger.info(
+                        f"[Mode] auto_send blocked by review mode for ticket="
+                        f"{ticket.get('ticket_id')} (confidence={decision.confidence}, "
+                        f"scenario={decision.scenario_identified})"
+                    )
+            except Exception as e:
+                logger.debug(f"[Mode] mode check skipped: {e}")
 
         # ── Update reasoning step ─────────────────────────────────
         steps[-1] = {
@@ -552,6 +965,23 @@ class AgentBrain:
             })
 
         decision.thinking_steps = steps
+        # Capture Stage 0 dump on the decision for downstream observability (test runs, UI)
+        try:
+            decision.stage0 = {
+                "queue_key_matched":   getattr(assessment, "queue_key_matched", ""),
+                "queue_status":        getattr(assessment, "queue_status", ""),
+                "physical_event":      getattr(assessment, "physical_event", ""),
+                "loss_type":           getattr(assessment, "loss_type", ""),
+                "reason_l1_likely":    getattr(assessment, "reason_l1_likely", ""),
+                "captain_claim":       getattr(assessment, "captain_claim", ""),
+                "scenario_hint":       getattr(assessment, "scenario_hint", ""),
+                "scan_logic":          getattr(assessment, "scan_logic", ""),
+                "domain_confidence":   getattr(assessment, "domain_confidence", ""),
+                "missing_info":        list(getattr(assessment, "missing_info", []) or []),
+            }
+        except NameError:
+            # `assessment` not bound (Stage 0 errored) — leave default {}
+            pass
 
         # Log stuck tickets to queue file for trainer review
         if decision.action == "stuck":
@@ -618,7 +1048,11 @@ class AgentBrain:
 
         # Add answer to SOP store so agent learns from it
         kt_text = f"Q: {question_text}\nA: {answer}"
-        self._sop.add_knowledge(kt_text, source=f"trainer_qa_{ticket_id}")
+        self._sop.add_knowledge(
+            kt_text,
+            source=f"trainer_qa_{ticket_id}",
+            content_type="trainer_qa",
+        )
         logger.info(f"[Brain] Trainer answer for {ticket_id} added to knowledge base")
 
     def reload_knowledge(self):

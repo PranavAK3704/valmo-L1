@@ -179,51 +179,118 @@ class GeminiClient:
         return [] if expect_list else {}
 
 
-    def read_attachment(self, url: str, filename: str = "") -> str:
-        """
-        Download a PDF/image/Excel attachment from an S3 URL and extract text
-        using Gemini Vision. Returns extracted text or empty string on failure.
-        """
-        import urllib.request, tempfile, pathlib, mimetypes
+    def _read_tabular_local(self, path: str, ext: str) -> str:
+        """Parse .xlsx/.xls/.csv into a compact text dump suitable for both
+        AWB-regex scanning and inclusion in the LLM prompt. Returns rows as
+        '| cell1 | cell2 | ...' lines, sheet headers if multiple sheets.
+        Raises if the file can't be parsed."""
+        import csv as _csv
 
-        # Determine mime type
+        if ext == ".csv":
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                reader = _csv.reader(f)
+                rows = [r for r in reader if any(c.strip() for c in r)]
+            return self._dump_rows(rows, sheet_name="(csv)")
+
+        # .xlsx / .xls — use openpyxl. For old .xls we may need xlrd; if not
+        # installed, the openpyxl call will raise and the caller falls through
+        # to Gemini Vision.
+        try:
+            import openpyxl
+        except Exception as e:
+            raise RuntimeError(f"openpyxl not installed: {e}")
+
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        parts = []
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                if any(c is not None and str(c).strip() for c in row):
+                    rows.append([("" if c is None else str(c)) for c in row])
+            if rows:
+                parts.append(self._dump_rows(rows, sheet_name=sheet_name))
+        wb.close()
+        return "\n\n".join(parts) if parts else "(empty workbook)"
+
+    def _dump_rows(self, rows: list, sheet_name: str = "") -> str:
+        """Format a list-of-lists as a markdown-ish table for LLM consumption."""
+        if not rows:
+            return ""
+        head = f"### Sheet: {sheet_name}\n" if sheet_name else ""
+        # Cap to 200 rows so a 10k-row dump doesn't blow the prompt budget
+        truncated = len(rows) > 200
+        rows_out = rows[:200]
+        lines = ["| " + " | ".join((c or "").strip() for c in r) + " |" for r in rows_out]
+        body = "\n".join(lines)
+        if truncated:
+            body += f"\n…({len(rows) - 200} more rows truncated)"
+        return head + body
+
+    def read_attachment(self, url: str, filename: str = "", prompt: str = None) -> str:
+        """
+        Download a PDF/image/Excel attachment from an S3 URL and extract text.
+
+        Routing:
+          * .xlsx / .xls / .csv  → parsed LOCALLY (openpyxl/csv). Free, fast, no
+                                   API call. Returns the cell contents as
+                                   structured text so AWB-regex can scan it.
+          * .pdf / images        → Gemini Vision via Files API.
+          * Anything else        → "[Attachment type ... not supported]".
+
+        `prompt` only matters for the Gemini-Vision path. Excel/CSV are always
+        dumped as raw cell text regardless of prompt.
+        """
+        import urllib.request, tempfile, pathlib, csv as _csv
+
         ext = pathlib.Path(filename or url.split("?")[0]).suffix.lower()
-        SUPPORTED = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp",
-                     ".xlsx", ".xls", ".csv"}
-        if ext not in SUPPORTED:
+        IMAGE_OR_PDF = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
+        TABULAR      = {".xlsx", ".xls", ".csv"}
+        if ext not in (IMAGE_OR_PDF | TABULAR):
             return f"[Attachment type {ext} not supported for auto-reading]"
 
+        # Download once into a temp file
         try:
-            # Download to temp file
             with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
                 tmp_path = tmp.name
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=15) as resp:
                 with open(tmp_path, "wb") as f:
                     f.write(resp.read())
+        except Exception as e:
+            logger.warning(f"[Gemini.read_attachment] download failed for {filename or url[:60]}: {e}")
+            return f"[Could not read attachment: download failed: {e}]"
 
-            # Upload to Gemini Files API and extract
+        # ── Tabular: parse locally, no Gemini call ──
+        if ext in TABULAR:
+            try:
+                text = self._read_tabular_local(tmp_path, ext)
+                return text[:6000]   # bigger budget than vision OCR since AWB lists can be long
+            except Exception as e:
+                logger.warning(f"[Gemini.read_attachment] local parse failed for {filename}: {e}")
+                # Fall through to Gemini Vision as last resort
+            finally:
+                try: pathlib.Path(tmp_path).unlink()
+                except Exception: pass
+
+        # ── PDF / image: Gemini Vision ──
+        default_prompt = (
+            "Extract all text, AWB numbers (format: VL followed by digits, or similar tracking IDs), "
+            "shipment IDs, amounts, dates, and any structured data from this document. "
+            "List all AWB/tracking numbers clearly. If it is a loss statement or shortage report, "
+            "extract: DC code, date range, shipment count, total loss amount, and each AWB listed."
+        )
+        try:
             upload = self._client.files.upload(file=tmp_path)
-
             response = self._client.models.generate_content(
                 model=MODEL,
-                contents=[
-                    upload,
-                    "Extract all text, AWB numbers (format: VL followed by digits, or similar tracking IDs), "
-                    "shipment IDs, amounts, dates, and any structured data from this document. "
-                    "List all AWB/tracking numbers clearly. If it is a loss statement or shortage report, "
-                    "extract: DC code, date range, shipment count, total loss amount, and each AWB listed.",
-                ],
+                contents=[upload, prompt or default_prompt],
                 config=types.GenerateContentConfig(temperature=0.0),
             )
-            try:
-                self._client.files.delete(name=upload.name)
-            except Exception:
-                pass
-            try:
-                pathlib.Path(tmp_path).unlink()
-            except Exception:
-                pass
+            try: self._client.files.delete(name=upload.name)
+            except Exception: pass
+            try: pathlib.Path(tmp_path).unlink()
+            except Exception: pass
 
             return response.text.strip()[:3000]
 

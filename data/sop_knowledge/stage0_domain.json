@@ -74,9 +74,9 @@
           ],
           "scenario_family": "shortage_loss",
           "common_sub_scenarios": [
-            "SS_1 missing evidence mails (L3)",
-            "SS_3 one-party evidence (SLA breach)",
-            "SS_4 both-party evidence contested"
+            "SL_1 evidence/reply mails not sent (L3 reroute)",
+            "SL_3 one-party evidence shared (loss attributed)",
+            "SL_4 both partners shared evidence but loss marked on one (escalate)"
           ]
         },
         "misroute": {

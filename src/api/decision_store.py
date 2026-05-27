@@ -85,6 +85,9 @@ def init_db():
         ("input_tokens",        "INTEGER DEFAULT 0"),
         ("output_tokens",       "INTEGER DEFAULT 0"),
         ("gemini_cost_inr",     "REAL DEFAULT 0.0"),
+        ("guardrail_triggered", "TEXT"),   # "" | "rule_1_unverified_claim" | "rule_2_family_mismatch"
+        ("reviewer_corrected_scenario", "TEXT"),  # what reviewer said the scenario should have been
+        ("reviewer_corrected_action",   "TEXT"),  # what reviewer said the action should have been
     ]:
         try:
             conn.execute(f"ALTER TABLE decisions ADD COLUMN {col} {definition}")
@@ -112,13 +115,18 @@ def save_decision(ticket: Dict, decision, usage: Dict = None) -> int:
         except Exception:
             pass
 
-    # Full description: prefer detail > description > body > page_text_snippet
+    # Full description for the dashboard's "Captain's Message" panel.
+    # ONLY two safe sources: captain_problem (role-aware) or full_description
+    # (canonical please_describe_issue). Do NOT fall back to ticket.detail,
+    # description, or body — Kapture stores L1 dispose drafts under those
+    # names. Do NOT fall back to subject — that's metadata, not the message.
+    # If both safe sources are empty, store empty string. The dashboard will
+    # render "(no captain text)" which is the correct signal that the captain
+    # did not provide a problem statement.
     full_desc = (
-        ticket.get("detail") or
-        ticket.get("description") or
-        ticket.get("body") or
-        ticket.get("page_text_snippet") or
-        ticket.get("subject") or ""
+        ticket.get("captain_problem") or
+        ticket.get("full_description") or
+        ""
     )
 
     u = usage or {}
@@ -128,6 +136,8 @@ def save_decision(ticket: Dict, decision, usage: Dict = None) -> int:
 
     clean_problem = getattr(decision, "clean_problem", "") or ""
 
+    guardrail = getattr(decision, "guardrail_triggered", "") or ""
+
     conn = get_conn()
     cur = conn.execute("""
         INSERT INTO decisions
@@ -136,8 +146,8 @@ def save_decision(ticket: Dict, decision, usage: Dict = None) -> int:
            stuck_question, missing_fields, reasoning,
            review_status, created_at, ticket_created_at, sla_hours, sla_breached,
            last_msg_time, thinking_steps, input_tokens, output_tokens, gemini_cost_inr,
-           clean_problem)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+           clean_problem, guardrail_triggered)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         str(ticket.get("ticket_id", "")),
         str(ticket.get("task_id", "") or ""),
@@ -164,6 +174,7 @@ def save_decision(ticket: Dict, decision, usage: Dict = None) -> int:
         json.dumps(getattr(decision, "thinking_steps", [])),
         inp_tok, out_tok, cost_inr,
         clean_problem,
+        guardrail,
     ))
     row_id = cur.lastrowid
     conn.commit()
@@ -195,24 +206,105 @@ Scenario matched: {row['scenario']}
 Action taken: {row['action']}
 Response sent: {(row['response_draft'] or '')[:400]}
 Reasoning: {(row['reasoning'] or '')[:300]}"""
-            get_sop_store().add_knowledge(rag_text, source=f"resolved_{ticket_id}")
+            get_sop_store().add_knowledge(
+                rag_text,
+                source=f"resolved_{ticket_id}",
+                content_type="resolved_precedent",
+            )
         except Exception:
             pass
 
     return changed > 0
 
 
-def reject_decision(row_id: int, note: str = "") -> bool:
+def reject_decision(row_id: int, note: str = "",
+                    corrected_scenario: str = "", corrected_action: str = "") -> bool:
+    """Mark a decision as rejected. corrected_scenario / corrected_action are
+    optional — when reviewer provides them they feed the per-scenario
+    flip-rate stats. Empty strings are stored as NULL so 'rejected with
+    correction' counts only rows where reviewer actually disagreed with
+    the scenario_id or action."""
     now = datetime.now(timezone.utc).isoformat()
+    cs = (corrected_scenario or "").strip() or None
+    ca = (corrected_action or "").strip() or None
     conn = get_conn()
+    row = conn.execute("SELECT * FROM decisions WHERE id=?", (row_id,)).fetchone()
     conn.execute("""
         UPDATE decisions
-        SET review_status='rejected', reviewer_note=?, reviewed_at=?
+        SET review_status='rejected', reviewer_note=?, reviewed_at=?,
+            reviewer_corrected_scenario=?, reviewer_corrected_action=?
         WHERE id=? AND review_status='pending'
-    """, (note, now, row_id))
+    """, (note, now, cs, ca, row_id))
     changed = conn.total_changes
     conn.commit(); conn.close()
+
+    # ── Learning loop: reviewer-corrected rejections feed back as
+    # CORRECTED PRECEDENTS so future similar tickets see "agent picked X,
+    # reviewer said correct answer was Y". The prompt formatter routes
+    # resolved_precedent chunks under "RESOLVED PRECEDENTS" with the
+    # explicit precedence rule (SOP wins on conflict). The "CORRECTED
+    # EXAMPLE" prefix lets the model recognise it as a calibration signal.
+    if changed > 0 and row and cs:
+        try:
+            from src.llm.sop_store import get_sop_store
+            ticket_id = row["ticket_id"]
+            rag_text = f"""CORRECTED EXAMPLE — {row['queue']} queue
+Ticket: {ticket_id}
+Problem: {row['clean_problem'] or row['subject']}
+Agent originally picked: scenario={row['scenario']} action={row['action']}
+REVIEWER CORRECTED to: scenario={cs}{f' action={ca}' if ca else ''}
+Reviewer note: {note or '(none provided)'}
+Original agent reasoning: {(row['reasoning'] or '')[:300]}"""
+            get_sop_store().add_knowledge(
+                rag_text,
+                source=f"rejected_corrected_{ticket_id}",
+                content_type="resolved_precedent",
+            )
+        except Exception:
+            pass
+
     return changed > 0
+
+
+def get_flip_rates() -> list:
+    """Per-scenario flip-rate stats. Counts decisions grouped by
+    scenario_identified. flip_rate = rejected_with_correction / total."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT
+            scenario AS scenario,
+            COUNT(*) AS total,
+            SUM(CASE WHEN review_status='approved' THEN 1 ELSE 0 END) AS approved,
+            SUM(CASE WHEN review_status='rejected' THEN 1 ELSE 0 END) AS rejected,
+            SUM(CASE WHEN review_status='rejected'
+                       AND reviewer_corrected_scenario IS NOT NULL
+                       AND reviewer_corrected_scenario != ''
+                     THEN 1 ELSE 0 END) AS rejected_with_correction,
+            SUM(CASE WHEN review_status='sent' THEN 1 ELSE 0 END) AS auto_sent,
+            SUM(CASE WHEN review_status='pending' THEN 1 ELSE 0 END) AS pending
+        FROM decisions
+        WHERE scenario IS NOT NULL AND scenario != ''
+        GROUP BY scenario
+    """).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        total = int(r["total"] or 0)
+        rwc = int(r["rejected_with_correction"] or 0)
+        out.append({
+            "scenario": r["scenario"],
+            "total":    total,
+            "approved": int(r["approved"] or 0),
+            "rejected": int(r["rejected"] or 0),
+            "rejected_with_correction": rwc,
+            "auto_sent": int(r["auto_sent"] or 0),
+            "pending":   int(r["pending"] or 0),
+            "flip_rate": round(rwc / total, 3) if total else 0.0,
+        })
+    # Sort flip_rate desc, then total desc as a tiebreak so high-volume
+    # well-behaved scenarios show below high-flip ones
+    out.sort(key=lambda x: (-x["flip_rate"], -x["total"]))
+    return out
 
 
 def mark_sent(row_id: int):
@@ -283,6 +375,20 @@ def get_stats() -> Dict:
         SELECT action, COUNT(*) as cnt FROM decisions GROUP BY action
     """).fetchall()
 
+    # Guardrail breakdown — counts of decisions where a code-enforced
+    # guardrail overrode the model output. Empty / NULL means no guardrail fired.
+    try:
+        guardrail_rows = conn.execute("""
+            SELECT COALESCE(guardrail_triggered,'') AS g, COUNT(*) AS cnt
+            FROM decisions
+            WHERE COALESCE(guardrail_triggered,'') != ''
+            GROUP BY g
+        """).fetchall()
+    except Exception:
+        guardrail_rows = []
+    guardrail_breakdown = [{"guardrail": r[0], "count": r[1]} for r in guardrail_rows]
+    guardrail_total = sum(r["count"] for r in guardrail_breakdown)
+
     # Today's tickets
     today = datetime.now(timezone.utc).date().isoformat()
     today_count = conn.execute(
@@ -333,6 +439,8 @@ def get_stats() -> Dict:
         "roi_multiplier": roi_multiplier,
         "queue_breakdown": [{"queue": r[0] or "Unknown", "count": r[1]} for r in queue_rows],
         "action_breakdown": [{"action": r[0], "count": r[1]} for r in action_rows],
+        "guardrails_total": guardrail_total,
+        "guardrail_breakdown": guardrail_breakdown,
     }
 
 

@@ -6,3 +6,4 @@ playwright
 google-genai
 chromadb
 requests
+openpyxl  # local .xlsx/.xls parsing for captain attachments (faster + cheaper than Gemini Vision)
